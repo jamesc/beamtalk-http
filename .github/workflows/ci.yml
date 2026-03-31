@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Erlang/OTP
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: "27"
+
+      - name: Install Beamtalk
+        run: curl -fsSL https://beamtalk.dev/install.sh | sudo sh -s -- --nightly --prefix /usr/local
+
+      - name: Check formatting
+        run: beamtalk fmt --check
+
+      - name: Build
+        run: beamtalk build
+
+      - name: Test
+        run: beamtalk test

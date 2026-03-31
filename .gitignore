@@ -1,0 +1,11 @@
+# Build outputs
+/_build/
+*.beam
+*.core
+erl_crash.dump
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
