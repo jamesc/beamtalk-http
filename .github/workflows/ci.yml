@@ -21,7 +21,7 @@ jobs:
         run: curl -fsSL https://beamtalk.dev/install.sh | sudo sh -s -- --nightly --prefix /usr/local
 
       - name: Check formatting
-        run: beamtalk fmt --check
+        run: beamtalk fmt-check
 
       - name: Build
         run: beamtalk build

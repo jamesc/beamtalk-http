@@ -11,7 +11,7 @@ test:
 
 # Check formatting
 fmt:
-    beamtalk fmt --check
+    beamtalk fmt-check
 
 # Format in place
 fmt-fix:
