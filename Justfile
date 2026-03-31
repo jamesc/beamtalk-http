@@ -1,3 +1,6 @@
+# Copyright 2026 beamtalk_http authors
+# SPDX-License-Identifier: Apache-2.0
+
 # Standard Beamtalk project targets.
 # See: https://beamtalk.dev/docs/tooling
 
@@ -17,8 +20,16 @@ fmt:
 fmt-fix:
     beamtalk fmt
 
-# Full CI check (fmt + build + test)
-ci: fmt build test
+# Lint source files
+lint:
+    beamtalk lint
+
+# Remove build artifacts
+clean:
+    rm -rf _build
+
+# Full CI check (fmt + lint + build + test)
+ci: fmt lint build test
 
 # Tag a release from beamtalk.toml version
 release:

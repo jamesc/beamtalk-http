@@ -72,6 +72,7 @@
 
 -include_lib("beamtalk_runtime/include/beamtalk.hrl").
 -include_lib("kernel/include/logger.hrl").
+-include("beamtalk_classes.hrl").
 
 -define(DEFAULT_TIMEOUT, 30000).
 
@@ -384,7 +385,7 @@ collect_response(ConnPid, StreamRef, MRef, Deadline, Selector) ->
 
 make_response(Status, GunHeaders, Body) ->
     BtHeaders = from_gun_headers(GunHeaders),
-    'bt@http@httpresponse':'class_status:headers:body:'(
+    ?BT_CLASS_MODULE_HTTPResponse:'class_status:headers:body:'(
         undefined, undefined, Status, BtHeaders, Body
     ).
 
