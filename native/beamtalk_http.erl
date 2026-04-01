@@ -529,12 +529,22 @@ remaining(Deadline) ->
     max(0, Deadline - erlang:monotonic_time(millisecond)).
 
 %% @private Return a Result error for a network-level HTTP failure.
+%%
+%% When a `reason` key is present in Details, it is appended to the hint
+%% message so that the underlying gun/ssl error is visible in error output
+%% without needing to inspect the details map.
 -spec http_error(atom(), map(), binary()) -> map().
 http_error(Selector, Details, Message) ->
+    FullMessage = case maps:find(reason, Details) of
+        {ok, Reason} ->
+            iolist_to_binary([Message, " (", io_lib:format("~p", [Reason]), ")"]);
+        error ->
+            Message
+    end,
     Error0 = beamtalk_error:new(http_error, 'Http'),
     Error1 = beamtalk_error:with_selector(Error0, Selector),
     Error2 = beamtalk_error:with_details(Error1, Details),
-    Error3 = beamtalk_error:with_hint(Error2, Message),
+    Error3 = beamtalk_error:with_hint(Error2, FullMessage),
     beamtalk_result:from_tagged_tuple({error, Error3}).
 
 %% @private Raise a type error for a bad argument.
