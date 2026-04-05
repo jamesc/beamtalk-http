@@ -1,21 +1,22 @@
 %% Copyright 2026 James Casey
 %% SPDX-License-Identifier: Apache-2.0
 
-%%% @doc Cowboy handler that bridges HTTP requests to Beamtalk handlers (BT-1338).
-%%%
-%%% **DDD Context:** Object System Context
-%%%
-%%% Each incoming HTTP request is converted to an `HTTPRequest` value object
-%%% and passed to the user-supplied handler. The handler may be:
-%%%
-%%% - A block (Erlang `fun/1`) receiving an `HTTPRequest`
-%%% - An actor pid responding to `handle:` with an `HTTPRequest`
-%%%
-%%% The handler must return an `HTTPResponse` value object. The response's
-%%% `status`, `headers`, and `body` fields are extracted and sent back to
-%%% the client via cowboy.
-
 -module(beamtalk_http_server_handler).
+-moduledoc """
+Cowboy handler that bridges HTTP requests to Beamtalk handlers (BT-1338).
+
+**DDD Context:** Object System Context
+
+Each incoming HTTP request is converted to an `HTTPRequest` value object
+and passed to the user-supplied handler. The handler may be:
+
+- A block (Erlang `fun/1`) receiving an `HTTPRequest`
+- An actor pid responding to `handle:` with an `HTTPRequest`
+
+The handler must return an `HTTPResponse` value object. The response's
+`status`, `headers`, and `body` fields are extracted and sent back to
+the client via cowboy.
+""".
 
 -behaviour(cowboy_handler).
 
@@ -24,10 +25,12 @@
 -include_lib("kernel/include/logger.hrl").
 -include("beamtalk_classes.hrl").
 
-%% @doc Handle a cowboy HTTP request by delegating to the Beamtalk handler.
-%%
-%% State is `#{handler := Handler}` where Handler is a fun/1, actor pid,
-%% or an HTTPRouter Value object (map with `compiledRoutes` key, BT-1344).
+-doc """
+Handle a cowboy HTTP request by delegating to the Beamtalk handler.
+
+State is `#{handler := Handler}` where Handler is a fun/1, actor pid,
+or an HTTPRouter Value object (map with `compiledRoutes` key, BT-1344).
+""".
 -spec init(cowboy_req:req(), map()) -> {ok, cowboy_req:req(), map()}.
 init(Req0, #{handler := Handler} = State) ->
     {HttpRequest, Req1} = build_request(Req0),
@@ -123,14 +126,14 @@ value_or_true(Val) -> Val.
 %%   - HTTPRouter Value object (map with `compiledRoutes` key) — compiled router (BT-1344)
 %%   - `fun/1` — block handler
 %%   - `pid()` — actor responding to `handle:`
--spec dispatch_handler(term(), map()) -> term().
+-spec dispatch_handler(term(), map()) -> beamtalk_http_response:t().
 dispatch_handler(#{compiledRoutes := Routes, notFoundHandler := NotFoundHandler}, Request) ->
     dispatch_router(Routes, NotFoundHandler, Request);
 dispatch_handler(Handler, Request) ->
     call_handler(Handler, Request).
 
 %% @private Route dispatch: match method+path, inject params, call handler.
--spec dispatch_router(list(), term(), map()) -> term().
+-spec dispatch_router(list(), term(), map()) -> beamtalk_http_response:t().
 dispatch_router(Routes, NotFoundHandler, Request) ->
     Method = maps:get(method, Request),
     Path = maps:get(path, Request),
@@ -149,27 +152,25 @@ dispatch_router(Routes, NotFoundHandler, Request) ->
 %% @private Call the handler with the request.
 %%
 %% Supports blocks (funs) and actor pids responding to `handle:`.
--spec call_handler(fun((map()) -> map()) | pid(), map()) -> term().
+-spec call_handler(fun((map()) -> beamtalk_http_response:t()) | pid(), map()) -> beamtalk_http_response:t().
 call_handler(Handler, Request) when is_function(Handler, 1) ->
     Handler(Request);
 call_handler(Handler, Request) when is_pid(Handler) ->
     beamtalk_actor:sync_send(Handler, 'handle:', [Request]).
 
-%% @private Build a simple HTTPResponse map for error responses.
--spec make_error_response(integer(), binary()) -> map().
+%% @private Build an HTTPResponse value for error responses.
+-dialyzer({nowarn_function, make_error_response/2}).
+-spec make_error_response(integer(), binary()) -> beamtalk_http_response:t().
 make_error_response(Status, Body) ->
-    #{
-        '$beamtalk_class' => 'HTTPResponse',
-        status => Status,
-        headers => [[<<"content-type">>, <<"text/plain">>]],
-        body => Body
-    }.
+    ?BT_CLASS_MODULE_HTTPResponse:'class_status:headers:body:'(
+        undefined, undefined, Status, [[<<"content-type">>, <<"text/plain">>]], Body
+    ).
 
 %% @private Extract a field from an HTTPResponse value object.
 %%
 %% HTTPResponse objects store fields in their map under the field name atom.
 %% The generated accessor methods use these keys.
--spec get_response_field(map(), atom(), term()) -> term().
+-spec get_response_field(beamtalk_http_response:t(), atom(), term()) -> term().
 get_response_field(Response, Field, Default) ->
     maps:get(Field, Response, Default).
 
@@ -177,7 +178,7 @@ get_response_field(Response, Field, Default) ->
 %%
 %% HTTPResponse headers are `[[Name, Value], ...]`.
 %% Cowboy expects `#{Name => Value, ...}`.
--spec get_response_headers(map()) -> map().
+-spec get_response_headers(beamtalk_http_response:t()) -> map().
 get_response_headers(Response) ->
     case maps:get(headers, Response, []) of
         Headers when is_list(Headers) ->

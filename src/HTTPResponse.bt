@@ -20,7 +20,7 @@
 /// resp headers     // => #(#("content-type", "application/json"), ...)
 /// resp body        // => "{...}"
 /// resp ok          // => true
-/// resp bodyAsJson  // => a Dictionary
+/// resp bodyAsJson  // => Result ok: a Dictionary
 /// ```
 sealed Value subclass: HTTPResponse
   /// HTTP status code (e.g. 200, 404, 500).
@@ -39,16 +39,16 @@ sealed Value subclass: HTTPResponse
   /// ```
   sealed ok -> Boolean => (self.status >= 200) and: [self.status <= 299]
 
-  /// Parse the response body as JSON and return the decoded value.
+  /// Parse the response body as JSON.
   ///
-  /// Equivalent to `Json parse: self body`. Raises a parse error if
-  /// the body is not valid JSON.
+  /// Returns `Result ok:` with the parsed value (typically a Dictionary),
+  /// or `Result error:` if the body is not valid JSON.
   ///
   /// ## Examples
   /// ```beamtalk
-  /// resp bodyAsJson         // => a Dictionary or List
+  /// json := resp bodyAsJson unwrap   // => a Dictionary or List
   /// ```
-  sealed bodyAsJson -> Object => (Json parse: self body) unwrap
+  sealed bodyAsJson -> Result => Json parse: self body
 
   /// Human-readable representation: "an HTTPResponse(200)".
   ///

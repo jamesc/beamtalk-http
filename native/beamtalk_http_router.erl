@@ -1,22 +1,23 @@
 %% Copyright 2026 James Casey
 %% SPDX-License-Identifier: Apache-2.0
 
-%%% @doc HTTP route compilation and matching for HTTPRouter (BT-1344).
-%%%
-%%% **DDD Context:** Object System Context
-%%%
-%%% Compiles path patterns (e.g. `/users/:id`) into segment lists and
-%%% matches incoming method+path pairs against compiled routes.
-%%%
-%%% Route compilation parses path patterns into segments:
-%%%   - `literal`  — exact string match (e.g. `<<"users">>`)
-%%%   - `{param, Name}` — named parameter capture (e.g. `:id`)
-%%%   - `{wildcard, Name}` — catch-all suffix (e.g. `*path`)
-%%%
-%%% Matching returns the handler and extracted parameters, or a status
-%%% indicating no match or wrong method.
-
 -module(beamtalk_http_router).
+-moduledoc """
+HTTP route compilation and matching for HTTPRouter (BT-1344).
+
+**DDD Context:** Object System Context
+
+Compiles path patterns (e.g. `/users/:id`) into segment lists and
+matches incoming method+path pairs against compiled routes.
+
+Route compilation parses path patterns into segments:
+  - `literal`  — exact string match (e.g. `<<"users">>`)
+  - `{param, Name}` — named parameter capture (e.g. `:id`)
+  - `{wildcard, Name}` — catch-all suffix (e.g. `*path`)
+
+Matching returns the handler and extracted parameters, or a status
+indicating no match or wrong method.
+""".
 
 -export([compile/1, match/3]).
 
@@ -36,27 +37,31 @@
 %%% Public API
 %%% ============================================================================
 
-%% @doc Compile a list of route specs into a compiled route table.
-%%
-%% Each route is `{Method, Path, Handler}` or `[Method, Path, Handler]` where:
-%%   - `Method` — HTTP method as a binary (e.g. `<<"GET">>`)
-%%   - `Path` — path pattern as a binary (e.g. `<<"/users/:id">>`)
-%%   - `Handler` — a fun/1 (block) to call with the enriched request
-%%
-%% The list form is used when called from Beamtalk (where `#(a, b, c)` produces
-%% an Erlang list). The tuple form is accepted for Erlang-native callers.
-%%
-%% Returns a compiled route list for use with `match/3`.
+-doc """
+Compile a list of route specs into a compiled route table.
+
+Each route is `{Method, Path, Handler}` or `[Method, Path, Handler]` where:
+  - `Method` — HTTP method as a binary (e.g. `<<"GET">>`)
+  - `Path` — path pattern as a binary (e.g. `<<"/users/:id">>`)
+  - `Handler` — a fun/1 (block) to call with the enriched request
+
+The list form is used when called from Beamtalk (where `#(a, b, c)` produces
+an Erlang list). The tuple form is accepted for Erlang-native callers.
+
+Returns a compiled route list for use with `match/3`.
+""".
 -spec compile([{binary(), binary(), fun()} | [binary() | fun()]]) -> compiled_routes().
 compile(Routes) when is_list(Routes) ->
     [compile_route(R) || R <- Routes].
 
-%% @doc Match a method and path against compiled routes.
-%%
-%% Returns:
-%%   - `{ok, Handler, Params}` — matched route with extracted parameters
-%%   - `method_not_allowed` — path matched but method did not
-%%   - `not_found` — no path match at all
+-doc """
+Match a method and path against compiled routes.
+
+Returns:
+  - `{ok, Handler, Params}` — matched route with extracted parameters
+  - `method_not_allowed` — path matched but method did not
+  - `not_found` — no path match at all
+""".
 -spec match(compiled_routes(), binary(), binary()) ->
     {ok, fun(), map()} | method_not_allowed | not_found.
 match(Routes, Method, Path) ->

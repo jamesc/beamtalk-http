@@ -1,33 +1,35 @@
 %% Copyright 2026 James Casey
 %% SPDX-License-Identifier: Apache-2.0
 
-%%% @doc Native gen_server backing the HTTPServer actor class (BT-1338, ADR 0056).
-%%%
-%%% **DDD Context:** Object System Context
-%%%
-%%% Manages cowboy listener lifecycle for the `HTTPServer` Actor class.
-%%% The compiled facade module (`bt@http@httpserver`) handles class/instance
-%%% dispatch; this module exports `start_link/1` and gen_server callbacks.
-%%%
-%%% Each HTTPServer actor owns a cowboy listener identified by a unique
-%%% reference. The listener dispatches all requests to a single Beamtalk
-%%% handler (block or actor).
-%%%
-%%% == State Map ==
-%%%
-%%% ```erlang
-%%% #{
-%%%   listener_ref => reference(),      % cowboy listener ref
-%%%   actual_port  => non_neg_integer() % TCP port the server is listening on
-%%% }
-%%% ```
-%%%
-%%% == Selectors ==
-%%%
-%%% * `{port, []}` — return the TCP port the server is listening on
-%%% * `{printString, []}` — human-readable representation
-
 -module(beamtalk_http_server).
+-moduledoc """
+Native gen_server backing the HTTPServer actor class (BT-1338, ADR 0056).
+
+**DDD Context:** Object System Context
+
+Manages cowboy listener lifecycle for the `HTTPServer` Actor class.
+The compiled facade module (`bt@http@httpserver`) handles class/instance
+dispatch; this module exports `start_link/1` and gen_server callbacks.
+
+Each HTTPServer actor owns a cowboy listener identified by a unique
+reference. The listener dispatches all requests to a single Beamtalk
+handler (block or actor).
+
+== State Map ==
+
+```erlang
+#{
+  listener_ref => reference(),      % cowboy listener ref
+  actual_port  => non_neg_integer() % TCP port the server is listening on
+}
+```
+
+== Selectors ==
+
+* `{port, []}` — return the TCP port the server is listening on
+* `{printString, []}` — human-readable representation
+""".
+
 -behaviour(gen_server).
 
 -include_lib("beamtalk_runtime/include/beamtalk.hrl").
@@ -49,12 +51,14 @@
 %%% Public API
 %%% ============================================================================
 
-%% @doc Start a linked HTTPServer gen_server (ADR 0056).
-%%
-%% Config must contain `port` (integer) and `handler` (fun/1, pid, or HTTPRouter).
-%% Optional: `bind` (IP address binary, default `"127.0.0.1"`).
-%%
-%% Called by the native facade's `spawn/1` via `spawnWith:`.
+-doc """
+Start a linked HTTPServer gen_server (ADR 0056).
+
+Config must contain `port` (integer) and `handler` (fun/1, pid, or HTTPRouter).
+Optional: `bind` (IP address binary, default `"127.0.0.1"`).
+
+Called by the native facade's `spawn/1` via `spawnWith:`.
+""".
 -spec start_link(map()) -> {ok, pid()} | {error, term()}.
 start_link(Config) ->
     gen_server:start_link(?MODULE, Config, []).
@@ -63,7 +67,7 @@ start_link(Config) ->
 %%% gen_server callbacks
 %%% ============================================================================
 
-%% @doc Start the cowboy listener on init.
+-doc "Start the cowboy listener on init.".
 -spec init(map()) -> {ok, map()} | {stop, term()}.
 init(Config) when is_map(Config) ->
     Port = maps:get(port, Config, 0),
@@ -79,7 +83,7 @@ init(Config) when is_map(Config) ->
 init(_) ->
     {stop, bad_config}.
 
-%% @doc Dispatch sync calls from `self delegate` methods.
+-doc "Dispatch sync calls from `self delegate` methods.".
 -spec handle_call(term(), term(), map()) ->
     {reply, term(), map()}.
 %% BT-1604: Strip propagated context from 3-tuple messages (ADR 0069 Phase 2b)
@@ -99,17 +103,17 @@ handle_call(Msg, _From, State) ->
     ?LOG_WARNING("Unknown call", #{message => Msg}),
     {reply, {error, unknown_call}, State}.
 
-%% @doc Ignore casts.
+-doc "Ignore casts.".
 -spec handle_cast(term(), map()) -> {noreply, map()}.
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-%% @doc No-op — cowboy manages its own processes.
+-doc "No-op — cowboy manages its own processes.".
 -spec handle_info(term(), map()) -> {noreply, map()}.
 handle_info(_Msg, State) ->
     {noreply, State}.
 
-%% @doc Stop the cowboy listener on shutdown.
+-doc "Stop the cowboy listener on shutdown.".
 -spec terminate(term(), map()) -> ok.
 terminate(_Reason, #{listener_ref := Ref}) ->
     stop_listener(Ref),
