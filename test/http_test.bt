@@ -19,7 +19,7 @@
 // unwrapped with `unwrap`. With generic Result(T, E) (BT-1576), unwrap returns
 // Dynamic for unparameterized Results, removing most DNU hints.
 
-TestCase subclass: HttpTest
+TestCase subclass: HTTPTest
   field: baseUrl = ""
 
   // Start the local test server and record the base URL.
