@@ -1,20 +1,21 @@
 %% Copyright 2026 James Casey
 %% SPDX-License-Identifier: Apache-2.0
 
-%%% @doc EUnit tests for beamtalk_http module (BT-1114).
-%%%
-%%% **DDD Context:** Object System Context
-%%%
-%%% Tests cover pure, non-network functions:
-%%% - URL parsing (parse_url/1)
-%%% - Method normalisation (normalise_method/1)
-%%% - Request option validation (validate_request_options/3)
-%%% - Header conversion (to_gun_headers/2, from_gun_headers/1)
-%%% - has_method/1 and dispatch/3 routing
-%%% - Type error guards for each public selector
-%%% - Deadline / remaining helpers
-
 -module(beamtalk_http_tests).
+-moduledoc """
+EUnit tests for beamtalk_http module (BT-1114).
+
+**DDD Context:** Object System Context
+
+Tests cover pure, non-network functions:
+- URL parsing (parse_url/1)
+- Method normalisation (normalise_method/1)
+- Request option validation (validate_request_options/3)
+- Header conversion (to_gun_headers/2, from_gun_headers/1)
+- has_method/1 and dispatch/3 routing
+- Type error guards for each public selector
+- Deadline / remaining helpers
+""".
 
 -include_lib("beamtalk_runtime/include/beamtalk.hrl").
 -include_lib("eunit/include/eunit.hrl").

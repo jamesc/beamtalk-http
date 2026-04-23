@@ -83,24 +83,18 @@ Fields: `status` (integer), `headers` (list of [Name, Value] binary pairs),
 
 -doc "Dispatch a message to the Http class object.".
 -spec dispatch(atom(), list(), map()) -> term().
-dispatch('get:', [Url], _Self) ->
-    'get:'(Url);
-dispatch('get:headers:', [Url, Headers], _Self) ->
-    'get:headers:'(Url, Headers);
-dispatch('post:body:', [Url, Body], _Self) ->
-    'post:body:'(Url, Body);
-dispatch('post:headers:body:', [Url, Headers, Body], _Self) ->
-    'post:headers:body:'(Url, Headers, Body);
-dispatch('put:body:', [Url, Body], _Self) ->
-    'put:body:'(Url, Body);
-dispatch('put:headers:body:', [Url, Headers, Body], _Self) ->
-    'put:headers:body:'(Url, Headers, Body);
-dispatch('delete:', [Url], _Self) ->
-    'delete:'(Url);
-dispatch('delete:headers:', [Url, Headers], _Self) ->
-    'delete:headers:'(Url, Headers);
-dispatch('request:url:options:', [Method, Url, Options], _Self) ->
-    'request:url:options:'(Method, Url, Options);
+%% Clause bodies are kept on the same line as the head because `beamtalk lint`
+%% misidentifies a `'name:'(Args)` call at line-start as a function definition
+%% and emits spurious missing-`-doc` diagnostics.
+dispatch('get:', [Url], _Self) -> 'get:'(Url);
+dispatch('get:headers:', [Url, Headers], _Self) -> 'get:headers:'(Url, Headers);
+dispatch('post:body:', [Url, Body], _Self) -> 'post:body:'(Url, Body);
+dispatch('post:headers:body:', [Url, Headers, Body], _Self) -> 'post:headers:body:'(Url, Headers, Body);
+dispatch('put:body:', [Url, Body], _Self) -> 'put:body:'(Url, Body);
+dispatch('put:headers:body:', [Url, Headers, Body], _Self) -> 'put:headers:body:'(Url, Headers, Body);
+dispatch('delete:', [Url], _Self) -> 'delete:'(Url);
+dispatch('delete:headers:', [Url, Headers], _Self) -> 'delete:headers:'(Url, Headers);
+dispatch('request:url:options:', [Method, Url, Options], _Self) -> 'request:url:options:'(Method, Url, Options);
 dispatch('class', _Args, _Self) ->
     'Http';
 dispatch('printString', _Args, _Self) ->
@@ -142,8 +136,7 @@ has_method(Selector) -> beamtalk_object_ops:has_method(Selector).
 
 -doc "Perform a GET request with no extra headers.".
 -spec 'get:'(binary()) -> {ok, beamtalk_http_response:t()} | {error, term()}.
-'get:'(Url) ->
-    'get:headers:'(Url, []).
+'get:'(Url) -> 'get:headers:'(Url, []).
 
 -doc """
 Perform a GET request.
@@ -162,8 +155,7 @@ HTTP status codes (e.g. 404) are not errors — they are on the HTTPResponse.
 
 -doc "Perform a POST request with body and no extra headers.".
 -spec 'post:body:'(binary(), binary()) -> {ok, beamtalk_http_response:t()} | {error, term()}.
-'post:body:'(Url, Body) ->
-    'post:headers:body:'(Url, [], Body).
+'post:body:'(Url, Body) -> 'post:headers:body:'(Url, [], Body).
 
 -doc "Perform a POST request with headers and body.".
 -spec 'post:headers:body:'(binary(), list(), binary()) -> {ok, beamtalk_http_response:t()} | {error, term()}.
@@ -178,8 +170,7 @@ HTTP status codes (e.g. 404) are not errors — they are on the HTTPResponse.
 
 -doc "Perform a PUT request with body and no extra headers.".
 -spec 'put:body:'(binary(), binary())-> {ok, beamtalk_http_response:t()} | {error, term()}.
-'put:body:'(Url, Body) ->
-    'put:headers:body:'(Url, [], Body).
+'put:body:'(Url, Body) -> 'put:headers:body:'(Url, [], Body).
 
 -doc "Perform a PUT request with headers and body.".
 -spec 'put:headers:body:'(binary(), list(), binary()) -> {ok, beamtalk_http_response:t()} | {error, term()}.
@@ -194,8 +185,7 @@ HTTP status codes (e.g. 404) are not errors — they are on the HTTPResponse.
 
 -doc "Perform a DELETE request with no extra headers.".
 -spec 'delete:'(binary()) -> {ok, beamtalk_http_response:t()} | {error, term()}.
-'delete:'(Url) ->
-    'delete:headers:'(Url, []).
+'delete:'(Url) -> 'delete:headers:'(Url, []).
 
 -doc "Perform a DELETE request.".
 -spec 'delete:headers:'(binary(), list()) -> {ok, beamtalk_http_response:t()} | {error, term()}.

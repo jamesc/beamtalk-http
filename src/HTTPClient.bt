@@ -45,7 +45,8 @@ Actor subclass: HTTPClient
   /// resp := (HTTPClient get: "https://httpbin.org/get") unwrap
   /// resp status   // => 200
   /// ```
-  class get: url :: String -> Result(HTTPResponse) => Erlang beamtalk_http get: url
+  class get: url :: String -> Result(HTTPResponse) =>
+    Erlang beamtalk_http get: url
 
   /// Perform a one-shot POST request with body (class method).
   ///
@@ -74,7 +75,8 @@ Actor subclass: HTTPClient
   /// resp := (HTTPClient delete: "https://httpbin.org/delete") unwrap
   /// resp ok   // => true
   /// ```
-  class delete: url :: String -> Result(HTTPResponse) => (Erlang beamtalk_http) delete: url
+  class delete: url :: String -> Result(HTTPResponse) =>
+    (Erlang beamtalk_http) delete: url
 
   /// Perform a one-shot generic request (class method).
   ///

@@ -1,14 +1,15 @@
 %% Copyright 2026 James Casey
 %% SPDX-License-Identifier: Apache-2.0
 
-%%% @doc EUnit tests for beamtalk_http_router (BT-1344).
-%%%
-%%% **DDD Context:** Object System Context
-%%%
-%%% Verifies route compilation and matching: exact paths, parameterized
-%%% routes, wildcards, method dispatch, 404/405 responses.
-
 -module(beamtalk_http_router_tests).
+-moduledoc """
+EUnit tests for beamtalk_http_router (BT-1344).
+
+**DDD Context:** Object System Context
+
+Verifies route compilation and matching: exact paths, parameterized
+routes, wildcards, method dispatch, 404/405 responses.
+""".
 
 -include_lib("eunit/include/eunit.hrl").
 

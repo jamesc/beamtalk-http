@@ -1,15 +1,16 @@
 %% Copyright 2026 James Casey
 %% SPDX-License-Identifier: Apache-2.0
 
-%%% @doc EUnit tests for beamtalk_http_server gen_server (BT-1338, ADR 0056).
-%%%
-%%% **DDD Context:** Object System Context
-%%%
-%%% Verifies the native gen_server backing the HTTPServer actor class.
-%%% Tests start real cowboy listeners via start_link/1 and exercise the
-%%% {port, []}/{printString, []} selectors and lifecycle.
-
 -module(beamtalk_http_server_tests).
+-moduledoc """
+EUnit tests for beamtalk_http_server gen_server (BT-1338, ADR 0056).
+
+**DDD Context:** Object System Context
+
+Verifies the native gen_server backing the HTTPServer actor class.
+Tests start real cowboy listeners via start_link/1 and exercise the
+{port, []}/{printString, []} selectors and lifecycle.
+""".
 
 -include_lib("eunit/include/eunit.hrl").
 

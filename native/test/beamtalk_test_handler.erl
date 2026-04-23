@@ -1,24 +1,25 @@
 %% Copyright 2026 James Casey
 %% SPDX-License-Identifier: Apache-2.0
 
-%%% @doc Cowboy request handler for BUnit HTTP integration tests (BT-1117).
-%%%
-%%% **DDD Context:** Object System Context
-%%%
-%%% Implements test endpoints used by `beamtalk_http_test_server`.  Each
-%%% endpoint is identified by the `State` argument passed from the router:
-%%%
-%%% | State          | Path             | Behaviour                                |
-%%% |----------------|------------------|------------------------------------------|
-%%% | `get`          | `/get`           | 200, JSON `{"method":"GET"}`             |
-%%% | `post`         | `/post`          | 200, JSON `{"method":"POST","body":"…"}` |
-%%% | `put`          | `/put`           | 200, JSON `{"method":"PUT","body":"…"}`  |
-%%% | `delete`       | `/delete`        | 200, JSON `{"method":"DELETE"}`          |
-%%% | `status`       | `/status/:code`  | `:code` status, empty body               |
-%%% | `json`         | `/json`          | 200, `application/json`                  |
-%%% | `echo_headers` | `/echo-headers`  | 200, JSON map of request headers         |
-
 -module(beamtalk_test_handler).
+-moduledoc """
+Cowboy request handler for BUnit HTTP integration tests (BT-1117).
+
+**DDD Context:** Object System Context
+
+Implements test endpoints used by `beamtalk_http_test_server`.  Each
+endpoint is identified by the `State` argument passed from the router:
+
+| State          | Path             | Behaviour                                |
+|----------------|------------------|------------------------------------------|
+| `get`          | `/get`           | 200, JSON `{"method":"GET"}`             |
+| `post`         | `/post`          | 200, JSON `{"method":"POST","body":"…"}` |
+| `put`          | `/put`           | 200, JSON `{"method":"PUT","body":"…"}`  |
+| `delete`       | `/delete`        | 200, JSON `{"method":"DELETE"}`          |
+| `status`       | `/status/:code`  | `:code` status, empty body               |
+| `json`         | `/json`          | 200, `application/json`                  |
+| `echo_headers` | `/echo-headers`  | 200, JSON map of request headers         |
+""".
 
 -behaviour(cowboy_handler).
 
@@ -26,9 +27,11 @@
 
 -define(JSON_CT, #{<<"content-type">> => <<"application/json">>}).
 
-%% @doc Handle a cowboy HTTP request.
-%%
-%% The `State` atom identifies which test endpoint to serve.
+-doc """
+Handle a cowboy HTTP request.
+
+The `State` atom identifies which test endpoint to serve.
+""".
 -spec init(cowboy_req:req(), atom()) -> {ok, cowboy_req:req(), atom()}.
 init(Req0, get) ->
     Body = iolist_to_binary(json:encode(#{<<"method">> => <<"GET">>})),
