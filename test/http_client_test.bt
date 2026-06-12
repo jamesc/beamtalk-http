@@ -42,9 +42,12 @@ TestCase subclass: HTTPClientTest
     self should: [HTTPClient new] raise: #instantiation_error
 
   testPrintStringInstance =>
-    // Actor instance printString returns "a HTTPClient"
+    // Actor instance printString returns "Actor(HTTPClient, 0.123.0)".
+    // The runtime renders the bare inner pid (X.Y.Z), whereas `pid asString`
+    // gives the bracketed "#Pid<X.Y.Z>" form — so strip the brackets to compare.
     client := HTTPClient spawn
-    self assert: client printString equals: "a HTTPClient"
+    innerPid := (((client pid) asString) replaceAll: "#Pid<" with: "") replaceAll: ">" with: ""
+    self assert: client printString equals: (("Actor(HTTPClient, " concat: innerPid) concat: ")")
     self assert: client stop equals: #ok
 
   testClassIdentity =>
