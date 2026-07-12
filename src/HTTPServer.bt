@@ -7,7 +7,8 @@
 /// port 0), dispatch incoming requests to a handler, and stop gracefully.
 ///
 /// The handler may be a block receiving an `HTTPRequest` and returning
-/// an `HTTPResponse`, or an actor responding to `handle:`.
+/// an `HTTPResponse`, an actor conforming to the `HTTPHandler` protocol
+/// (responding to `handle:`), or a compiled `HTTPRouter`.
 ///
 /// As an Actor, HTTPServer can be supervised for automatic restart on
 /// failure and integrates with the standard Actor lifecycle (`stop`,
@@ -51,7 +52,7 @@ Actor subclass: HTTPServer native: beamtalk_http_server
   ///   HTTPResponse new: #{ #status => 200, #body => "hello" }
   /// ]
   /// ```
-  class start: port :: Integer handler: handler -> HTTPServer =>
+  class start: port :: Integer handler: handler :: Block(HTTPRequest, HTTPResponse) | HTTPHandler | HTTPRouter -> HTTPServer =>
     self spawnWith: #{#port => port, #handler => handler}
 
   /// Start an HTTP server with additional options.
@@ -64,7 +65,7 @@ Actor subclass: HTTPServer native: beamtalk_http_server
   /// srv := HTTPServer start: 0 handler: handler
   ///   options: #{ #bind => "0.0.0.0" }
   /// ```
-  class start: port :: Integer handler: handler options: opts :: Dictionary -> HTTPServer =>
+  class start: port :: Integer handler: handler :: Block(HTTPRequest, HTTPResponse) | HTTPHandler | HTTPRouter options: opts :: Dictionary -> HTTPServer =>
     self spawnWith: (#{#port => port, #handler => handler} merge: opts)
 
   /// Return the TCP port this server is listening on.

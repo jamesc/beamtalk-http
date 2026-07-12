@@ -30,26 +30,26 @@ sealed Value subclass: HTTPRoute
   /// Path pattern (e.g. "/users/:id").
   field: path :: String = "/"
   /// Handler block receiving an HTTPRequest.
-  field: handler = nil
+  field: handler :: Block(HTTPRequest, HTTPResponse) | Nil = nil
 
   /// Create a GET route.
-  class get: path :: String handler: handler -> HTTPRoute =>
+  class get: path :: String handler: handler :: Block(HTTPRequest, HTTPResponse) -> HTTPRoute =>
     self new: #{#method => "GET", #path => path, #handler => handler}
 
   /// Create a POST route.
-  class post: path :: String handler: handler -> HTTPRoute =>
+  class post: path :: String handler: handler :: Block(HTTPRequest, HTTPResponse) -> HTTPRoute =>
     self new: #{#method => "POST", #path => path, #handler => handler}
 
   /// Create a PUT route.
-  class put: path :: String handler: handler -> HTTPRoute =>
+  class put: path :: String handler: handler :: Block(HTTPRequest, HTTPResponse) -> HTTPRoute =>
     self new: #{#method => "PUT", #path => path, #handler => handler}
 
   /// Create a DELETE route.
-  class delete: path :: String handler: handler -> HTTPRoute =>
+  class delete: path :: String handler: handler :: Block(HTTPRequest, HTTPResponse) -> HTTPRoute =>
     self new: #{#method => "DELETE", #path => path, #handler => handler}
 
   /// Create a PATCH route.
-  class patch: path :: String handler: handler -> HTTPRoute =>
+  class patch: path :: String handler: handler :: Block(HTTPRequest, HTTPResponse) -> HTTPRoute =>
     self new: #{#method => "PATCH", #path => path, #handler => handler}
 
   /// Human-readable representation: "an HTTPRoute(GET /users/:id)".

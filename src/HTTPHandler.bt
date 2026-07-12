@@ -1,0 +1,22 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// HTTPHandler — Protocol for actors that can serve as an `HTTPServer` handler.
+///
+/// `HTTPServer start:handler:` accepts an actor in place of a block. The
+/// runtime dispatches each incoming request by sending `handle:` to that
+/// actor and expects an `HTTPResponse` back — an actor that does not
+/// implement `handle:` will fail at the message-send, not at compile time,
+/// unless it conforms to this protocol.
+///
+/// ## Examples
+/// ```beamtalk
+/// Actor subclass: EchoHandler
+///   handle: req :: HTTPRequest -> HTTPResponse =>
+///     HTTPResponse new: #{ #status => 200, #body => req body }
+///
+/// srv := HTTPServer start: 8080 handler: EchoHandler spawn
+/// ```
+Protocol define: HTTPHandler
+  /// Handle an incoming request and return a response.
+  handle: request :: HTTPRequest -> HTTPResponse

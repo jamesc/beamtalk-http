@@ -57,7 +57,7 @@ sealed Value subclass: HTTPRouter
   /// Compiled route table (opaque Erlang term, internal).
   field: compiledRoutes = nil
   /// Custom not-found handler (internal).
-  field: notFoundHandler = nil
+  field: notFoundHandler :: Block(HTTPRequest, HTTPResponse) | Nil = nil
   /// Number of routes in this router.
   field: routeCount :: Integer = 0
 
@@ -72,7 +72,7 @@ sealed Value subclass: HTTPRouter
   ///   r get: "/" handler: [:req | HTTPResponse new: #{ #status => 200, #body => "ok" }]
   /// ]
   /// ```
-  class build: block -> HTTPRouter =>
+  class build: block :: Block(HTTPRouteBuilder, Object) -> HTTPRouter =>
     builder := HTTPRouteBuilder spawn
     block value: builder
     routeList := builder routes
@@ -88,11 +88,11 @@ sealed Value subclass: HTTPRouter
   ///   HTTPRoute get: "/" handler: [:req | HTTPResponse new: #{ #status => 200, #body => "ok" }]
   /// )
   /// ```
-  class routes: routeArray :: List -> HTTPRouter =>
+  class routes: routeArray :: List(HTTPRoute) -> HTTPRouter =>
     self compileRoutes: routeArray notFoundHandler: nil
 
   /// Internal: compile a list of HTTPRoute values into a frozen router.
-  class compileRoutes: routeArray notFoundHandler: notFoundHandler -> HTTPRouter =>
+  class compileRoutes: routeArray :: List(HTTPRoute) notFoundHandler: notFoundHandler :: Block(HTTPRequest, HTTPResponse) | Nil -> HTTPRouter =>
     rawRoutes := routeArray collect: [:route |
       #(route method, route path, route handler)
     ]

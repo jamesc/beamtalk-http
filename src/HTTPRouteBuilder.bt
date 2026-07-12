@@ -17,38 +17,38 @@
 /// ```
 Actor subclass: HTTPRouteBuilder
   /// Accumulated route values (internal).
-  state: routes :: List = #()
+  state: routes :: List(HTTPRoute) = #()
   /// Custom not-found handler block (internal).
-  state: notFoundHandler = nil
+  state: notFoundHandler :: Block(HTTPRequest, HTTPResponse) | Nil = nil
 
   /// Add a GET route.
-  get: path :: String handler: handler =>
+  get: path :: String handler: handler :: Block(HTTPRequest, HTTPResponse) =>
     self.routes := self.routes add: (HTTPRoute get: path handler: handler)
 
   /// Add a POST route.
-  post: path :: String handler: handler =>
+  post: path :: String handler: handler :: Block(HTTPRequest, HTTPResponse) =>
     self.routes := self.routes add: (HTTPRoute post: path handler: handler)
 
   /// Add a PUT route.
-  put: path :: String handler: handler =>
+  put: path :: String handler: handler :: Block(HTTPRequest, HTTPResponse) =>
     self.routes := self.routes add: (HTTPRoute put: path handler: handler)
 
   /// Add a DELETE route.
-  delete: path :: String handler: handler =>
+  delete: path :: String handler: handler :: Block(HTTPRequest, HTTPResponse) =>
     self.routes := self.routes add: (HTTPRoute delete: path handler: handler)
 
   /// Add a PATCH route.
-  patch: path :: String handler: handler =>
+  patch: path :: String handler: handler :: Block(HTTPRequest, HTTPResponse) =>
     self.routes := self.routes add: (HTTPRoute patch: path handler: handler)
 
   /// Set a custom handler for requests that match no route (404).
   ///
   /// The handler receives the HTTPRequest and should return an HTTPResponse.
   /// If not set, a default 404 plain-text response is returned.
-  notFound: handler => self.notFoundHandler := handler
+  notFound: handler :: Block(HTTPRequest, HTTPResponse) => self.notFoundHandler := handler
 
   /// Return the accumulated routes list.
-  routes -> List => self.routes
+  routes -> List(HTTPRoute) => self.routes
 
   /// Return the custom not-found handler (or nil).
-  notFoundHandler => self.notFoundHandler
+  notFoundHandler -> Block(HTTPRequest, HTTPResponse) | Nil => self.notFoundHandler
