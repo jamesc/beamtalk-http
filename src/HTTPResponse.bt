@@ -48,7 +48,7 @@ sealed Value subclass: HTTPResponse
   /// ```beamtalk
   /// json := resp bodyAsJson unwrap   // => a Dictionary or List
   /// ```
-  sealed bodyAsJson -> Result => Json parse: self body
+  sealed bodyAsJson -> Result(Dynamic, Error) => Json parse: self body
 
   /// Human-readable representation: "an HTTPResponse(200)".
   ///
