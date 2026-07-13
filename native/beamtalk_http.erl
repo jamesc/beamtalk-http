@@ -86,15 +86,24 @@ Fields: `status` (integer), `headers` (list of [Name, Value] binary pairs),
 %% Clause bodies are kept on the same line as the head because `beamtalk lint`
 %% misidentifies a `'name:'(Args)` call at line-start as a function definition
 %% and emits spurious missing-`-doc` diagnostics.
-dispatch('get:', [Url], _Self) -> 'get:'(Url);
-dispatch('get:headers:', [Url, Headers], _Self) -> 'get:headers:'(Url, Headers);
-dispatch('post:body:', [Url, Body], _Self) -> 'post:body:'(Url, Body);
-dispatch('post:headers:body:', [Url, Headers, Body], _Self) -> 'post:headers:body:'(Url, Headers, Body);
-dispatch('put:body:', [Url, Body], _Self) -> 'put:body:'(Url, Body);
-dispatch('put:headers:body:', [Url, Headers, Body], _Self) -> 'put:headers:body:'(Url, Headers, Body);
-dispatch('delete:', [Url], _Self) -> 'delete:'(Url);
-dispatch('delete:headers:', [Url, Headers], _Self) -> 'delete:headers:'(Url, Headers);
-dispatch('request:url:options:', [Method, Url, Options], _Self) -> 'request:url:options:'(Method, Url, Options);
+dispatch('get:', [Url], _Self) ->
+    'get:'(Url);
+dispatch('get:headers:', [Url, Headers], _Self) ->
+    'get:headers:'(Url, Headers);
+dispatch('post:body:', [Url, Body], _Self) ->
+    'post:body:'(Url, Body);
+dispatch('post:headers:body:', [Url, Headers, Body], _Self) ->
+    'post:headers:body:'(Url, Headers, Body);
+dispatch('put:body:', [Url, Body], _Self) ->
+    'put:body:'(Url, Body);
+dispatch('put:headers:body:', [Url, Headers, Body], _Self) ->
+    'put:headers:body:'(Url, Headers, Body);
+dispatch('delete:', [Url], _Self) ->
+    'delete:'(Url);
+dispatch('delete:headers:', [Url, Headers], _Self) ->
+    'delete:headers:'(Url, Headers);
+dispatch('request:url:options:', [Method, Url, Options], _Self) ->
+    'request:url:options:'(Method, Url, Options);
 dispatch('class', _Args, _Self) ->
     'Http';
 dispatch('printString', _Args, _Self) ->
@@ -158,7 +167,8 @@ HTTP status codes (e.g. 404) are not errors — they are on the HTTPResponse.
 'post:body:'(Url, Body) -> 'post:headers:body:'(Url, [], Body).
 
 -doc "Perform a POST request with headers and body.".
--spec 'post:headers:body:'(binary(), list(), binary()) -> {ok, beamtalk_http_response:t()} | {error, term()}.
+-spec 'post:headers:body:'(binary(), list(), binary()) ->
+    {ok, beamtalk_http_response:t()} | {error, term()}.
 'post:headers:body:'(Url, Headers, Body) when is_binary(Url), is_list(Headers), is_binary(Body) ->
     do_request(<<"POST">>, Url, Headers, Body, ?DEFAULT_TIMEOUT, 'post:headers:body:');
 'post:headers:body:'(Url, _, _) when not is_binary(Url) ->
@@ -169,11 +179,12 @@ HTTP status codes (e.g. 404) are not errors — they are on the HTTPResponse.
     type_error('post:headers:body:', <<"Body must be a String">>).
 
 -doc "Perform a PUT request with body and no extra headers.".
--spec 'put:body:'(binary(), binary())-> {ok, beamtalk_http_response:t()} | {error, term()}.
+-spec 'put:body:'(binary(), binary()) -> {ok, beamtalk_http_response:t()} | {error, term()}.
 'put:body:'(Url, Body) -> 'put:headers:body:'(Url, [], Body).
 
 -doc "Perform a PUT request with headers and body.".
--spec 'put:headers:body:'(binary(), list(), binary()) -> {ok, beamtalk_http_response:t()} | {error, term()}.
+-spec 'put:headers:body:'(binary(), list(), binary()) ->
+    {ok, beamtalk_http_response:t()} | {error, term()}.
 'put:headers:body:'(Url, Headers, Body) when is_binary(Url), is_list(Headers), is_binary(Body) ->
     do_request(<<"PUT">>, Url, Headers, Body, ?DEFAULT_TIMEOUT, 'put:headers:body:');
 'put:headers:body:'(Url, _, _) when not is_binary(Url) ->
@@ -202,7 +213,8 @@ Perform a generic HTTP request.
 `Method` is a binary like `<<"GET">>` or a symbol like `#get`.
 `Options` is a map with optional keys: `headers`, `body`, `timeout`.
 """.
--spec 'request:url:options:'(term(), binary(), map()) -> {ok, beamtalk_http_response:t()} | {error, term()}.
+-spec 'request:url:options:'(term(), binary(), map()) ->
+    {ok, beamtalk_http_response:t()} | {error, term()}.
 'request:url:options:'(Method, Url, Options) when is_binary(Url), is_map(Options) ->
     MethodBin = normalise_method(Method),
     Headers = maps:get(headers, Options, []),
@@ -228,7 +240,7 @@ get(Url) -> 'get:'(Url).
 post(Url, Body) -> 'post:body:'(Url, Body).
 
 -doc "PUT delegate called by `(Erlang beamtalk_http) put: url body: body`.".
--spec put(binary(), binary())-> {ok, beamtalk_http_response:t()} | {error, term()}.
+-spec put(binary(), binary()) -> {ok, beamtalk_http_response:t()} | {error, term()}.
 put(Url, Body) -> 'put:body:'(Url, Body).
 
 -doc "DELETE delegate called by `(Erlang beamtalk_http) delete: url`.".
@@ -256,7 +268,7 @@ request(Method, Url, Options) -> 'request:url:options:'(Method, Url, Options).
 %% `Selector` is the public API selector, used in error reports so the user
 %% sees `'get:'` rather than the internal `'do_request'` helper name.
 -spec do_request(binary(), binary(), list(), binary(), non_neg_integer(), atom()) ->
- {ok, term()} | {error, term()}.
+    {ok, term()} | {error, term()}.
 do_request(Method, Url, BtHeaders, Body, Timeout, Selector) ->
     case parse_url(Url) of
         {error, invalid_url} ->
@@ -540,12 +552,13 @@ remaining(Deadline) ->
 %% without needing to inspect the details map.
 -spec http_error(atom(), map(), binary()) -> {error, term()}.
 http_error(Selector, Details, Message) ->
-    FullMessage = case maps:find(reason, Details) of
-        {ok, Reason} ->
-            iolist_to_binary([Message, " (", io_lib:format("~p", [Reason]), ")"]);
-        error ->
-            Message
-    end,
+    FullMessage =
+        case maps:find(reason, Details) of
+            {ok, Reason} ->
+                iolist_to_binary([Message, " (", io_lib:format("~p", [Reason]), ")"]);
+            error ->
+                Message
+        end,
     Error0 = beamtalk_error:new(http_error, 'Http'),
     Error1 = beamtalk_error:with_selector(Error0, Selector),
     Error2 = beamtalk_error:with_details(Error1, Details),

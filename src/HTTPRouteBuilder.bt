@@ -45,10 +45,12 @@ Actor subclass: HTTPRouteBuilder
   ///
   /// The handler receives the HTTPRequest and should return an HTTPResponse.
   /// If not set, a default 404 plain-text response is returned.
-  notFound: handler :: Block(HTTPRequest, HTTPResponse) => self.notFoundHandler := handler
+  notFound: handler :: Block(HTTPRequest, HTTPResponse) =>
+    self.notFoundHandler := handler
 
   /// Return the accumulated routes list.
   routes -> List(HTTPRoute) => self.routes
 
   /// Return the custom not-found handler (or nil).
-  notFoundHandler -> Block(HTTPRequest, HTTPResponse) | Nil => self.notFoundHandler
+  notFoundHandler -> Block(HTTPRequest, HTTPResponse) | Nil =>
+    self.notFoundHandler

@@ -152,7 +152,8 @@ dispatch_router(Routes, NotFoundHandler, Request) ->
 %% @private Call the handler with the request.
 %%
 %% Supports blocks (funs) and actor pids responding to `handle:`.
--spec call_handler(fun((map()) -> beamtalk_http_response:t()) | pid(), map()) -> beamtalk_http_response:t().
+-spec call_handler(fun((map()) -> beamtalk_http_response:t()) | pid(), map()) ->
+    beamtalk_http_response:t().
 call_handler(Handler, Request) when is_function(Handler, 1) ->
     Handler(Request);
 call_handler(Handler, Request) when is_pid(Handler) ->

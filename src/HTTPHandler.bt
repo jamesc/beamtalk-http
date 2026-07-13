@@ -1,6 +1,5 @@
 // Copyright 2026 James Casey
 // SPDX-License-Identifier: Apache-2.0
-
 /// HTTPHandler — Protocol for actors that can serve as an `HTTPServer` handler.
 ///
 /// `HTTPServer start:handler:` accepts an actor in place of a block. The
