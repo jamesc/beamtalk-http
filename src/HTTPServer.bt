@@ -39,6 +39,11 @@
 /// @see HTTPClient (for making HTTP requests)
 /// @see HTTPRequest (for incoming request objects)
 /// @see HTTPResponse (for building response objects)
+
+/// Anything `HTTPServer start:handler:` accepts as a request handler: a
+/// plain block, an actor conforming to `HTTPHandler`, or a compiled
+/// `HTTPRouter`.
+type HTTPHandlerLike = Block(HTTPRequest, HTTPResponse) | HTTPHandler | HTTPRouter
 Actor subclass: HTTPServer native: beamtalk_http_server
 
   /// Start an HTTP server on the given port with a handler block or actor.
@@ -52,7 +57,7 @@ Actor subclass: HTTPServer native: beamtalk_http_server
   ///   HTTPResponse new: #{ #status => 200, #body => "hello" }
   /// ]
   /// ```
-  class start: port :: Integer handler: handler :: Block(HTTPRequest, HTTPResponse) | HTTPHandler | HTTPRouter -> HTTPServer =>
+  class start: port :: Integer handler: handler :: HTTPHandlerLike -> HTTPServer =>
     self spawnWith: #{#port => port, #handler => handler}
 
   /// Start an HTTP server with additional options.
@@ -65,7 +70,7 @@ Actor subclass: HTTPServer native: beamtalk_http_server
   /// srv := HTTPServer start: 0 handler: handler
   ///   options: #{ #bind => "0.0.0.0" }
   /// ```
-  class start: port :: Integer handler: handler :: Block(HTTPRequest, HTTPResponse) | HTTPHandler | HTTPRouter options: opts :: Dictionary -> HTTPServer =>
+  class start: port :: Integer handler: handler :: HTTPHandlerLike options: opts :: Dictionary(Symbol, Dynamic) -> HTTPServer =>
     self spawnWith: (#{#port => port, #handler => handler} merge: opts)
 
   /// Return the TCP port this server is listening on.

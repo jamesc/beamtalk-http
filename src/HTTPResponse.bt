@@ -26,7 +26,7 @@ sealed Value subclass: HTTPResponse
   /// HTTP status code (e.g. 200, 404, 500).
   field: status :: Integer = 0
   /// Response headers as a List of [name, value] binary pairs.
-  field: headers :: List = #()
+  field: headers :: List(List(String)) = #()
   /// Response body as a String.
   field: body :: String = ""
 
@@ -48,7 +48,7 @@ sealed Value subclass: HTTPResponse
   /// ```beamtalk
   /// json := resp bodyAsJson unwrap   // => a Dictionary or List
   /// ```
-  sealed bodyAsJson -> Result(Dynamic, Error) => Json parse: self body
+  sealed bodyAsJson -> Result(JsonValue, Error) => Json parse: self body
 
   /// Human-readable representation: "an HTTPResponse(200)".
   ///

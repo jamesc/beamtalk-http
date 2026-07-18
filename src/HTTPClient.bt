@@ -33,7 +33,7 @@
 /// @see HTTPResponse (for response objects returned by requests)
 Actor subclass: HTTPClient
   state: baseUrl :: String = ""
-  state: headers :: List = #()
+  state: headers :: List(List(String)) = #()
   state: timeout :: Integer = 30000
 
   // ===== Class-side one-shot convenience methods =====
@@ -90,7 +90,7 @@ Actor subclass: HTTPClient
   /// resp := HTTPClient request: #patch url: "https://httpbin.org/patch"
   ///   options: #{#body => "{}", #timeout => 5000}
   /// ```
-  class request: method :: Symbol | String url: url :: String options: opts :: Dictionary -> Result(HTTPResponse, Error) =>
+  class request: method :: Symbol | String url: url :: String options: opts :: Dictionary(Symbol, Dynamic) -> Result(HTTPResponse, Error) =>
     (Erlang beamtalk_http)
       request: method
       url: url
@@ -173,7 +173,7 @@ Actor subclass: HTTPClient
   /// resp := client request: #patch path: "/patch" options: #{#body => "{}"}
   /// resp ok   // => true
   /// ```
-  request: method :: Symbol | String path: path :: String options: opts :: Dictionary -> Result(HTTPResponse, Error) =>
+  request: method :: Symbol | String path: path :: String options: opts :: Dictionary(Symbol, Dynamic) -> Result(HTTPResponse, Error) =>
     url := self.baseUrl ++ path
     defaults := #{#headers => self.headers, #timeout => self.timeout}
     (Erlang beamtalk_http)
