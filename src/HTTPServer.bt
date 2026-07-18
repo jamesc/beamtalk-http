@@ -71,7 +71,7 @@ Actor subclass: HTTPServer native: beamtalk_http_server
   /// srv := HTTPServer start: 0 handler: handler
   ///   options: #{ #bind => "0.0.0.0" }
   /// ```
-  class start: port :: Integer handler: handler :: HTTPHandlerLike options: opts :: Dictionary -> HTTPServer =>
+  class start: port :: Integer handler: handler :: HTTPHandlerLike options: opts :: Dictionary(Symbol, Dynamic) -> HTTPServer =>
     self spawnWith: (#{#port => port, #handler => handler} merge: opts)
 
   /// Return the TCP port this server is listening on.

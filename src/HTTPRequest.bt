@@ -32,13 +32,13 @@ sealed Value subclass: HTTPRequest
   /// Request path (e.g. "/api/users").
   field: path :: String = "/"
   /// Request headers as a List of [name, value] binary pairs.
-  field: headers :: List = #()
+  field: headers :: List(List(String)) = #()
   /// Request body as a String.
   field: body :: String = ""
   /// Query parameters as a Dictionary.
-  field: queryParams :: Dictionary = #{}
+  field: queryParams :: Dictionary(String, String) = #{}
   /// Path parameters extracted by HTTPRouter (e.g. `:id` → "42").
-  field: params :: Dictionary = #{}
+  field: params :: Dictionary(String, String) = #{}
 
   /// Return the value of a named path parameter.
   ///
