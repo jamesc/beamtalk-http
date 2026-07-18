@@ -44,7 +44,6 @@
 /// plain block, an actor conforming to `HTTPHandler`, or a compiled
 /// `HTTPRouter`.
 type HTTPHandlerLike = Block(HTTPRequest, HTTPResponse) | HTTPHandler | HTTPRouter
-
 Actor subclass: HTTPServer native: beamtalk_http_server
 
   /// Start an HTTP server on the given port with a handler block or actor.
