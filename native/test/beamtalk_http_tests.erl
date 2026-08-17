@@ -383,8 +383,10 @@ build_gun_opts_tls_test() ->
         {server_name_indication, "example.com"},
         lists:keyfind(server_name_indication, 1, TlsOpts)
     ),
-    ?assertMatch({customize_hostname_check, [{match_fun, _}]},
-        lists:keyfind(customize_hostname_check, 1, TlsOpts)).
+    ?assertMatch(
+        {customize_hostname_check, [{match_fun, _}]},
+        lists:keyfind(customize_hostname_check, 1, TlsOpts)
+    ).
 
 %%% ============================================================================
 %%% No-colon delegate type-error guards (BT-1117)
