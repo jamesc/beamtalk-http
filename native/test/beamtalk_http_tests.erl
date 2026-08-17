@@ -9,6 +9,7 @@ EUnit tests for beamtalk_http module (BT-1114).
 
 Tests cover pure, non-network functions:
 - URL parsing (parse_url/1)
+- Connection option building, including TLS (build_gun_opts/2)
 - Method normalisation (normalise_method/1)
 - Request option validation (validate_request_options/3)
 - Header conversion (to_gun_headers/2, from_gun_headers/1)
@@ -358,6 +359,32 @@ parse_url_no_scheme_test() ->
 
 parse_url_garbage_test() ->
     ?assertEqual({error, invalid_url}, beamtalk_http:parse_url(<<"not a url">>)).
+
+%%% ============================================================================
+%%% build_gun_opts/2 — TLS connection options (BT-3191)
+%%%
+%%% Hermetic coverage for the HTTPS-specific client behaviour (peer
+%%% verification, CA bundle, SNI, hostname matching) now that
+%%% HTTPTest>>testHttpsGetReturnsOkStatus is opt-in rather than run by
+%%% default — see test/http_test.bt.
+%%% ============================================================================
+
+build_gun_opts_tcp_test() ->
+    ?assertEqual(#{transport => tcp}, beamtalk_http:build_gun_opts(tcp, "example.com")).
+
+build_gun_opts_tls_test() ->
+    #{transport := Transport, tls_opts := TlsOpts} =
+        beamtalk_http:build_gun_opts(tls, "example.com"),
+    ?assertEqual(tls, Transport),
+    ?assertEqual({verify, verify_peer}, lists:keyfind(verify, 1, TlsOpts)),
+    {cacerts, Cacerts} = lists:keyfind(cacerts, 1, TlsOpts),
+    ?assert(is_list(Cacerts)),
+    ?assertEqual(
+        {server_name_indication, "example.com"},
+        lists:keyfind(server_name_indication, 1, TlsOpts)
+    ),
+    ?assertMatch({customize_hostname_check, [{match_fun, _}]},
+        lists:keyfind(customize_hostname_check, 1, TlsOpts)).
 
 %%% ============================================================================
 %%% No-colon delegate type-error guards (BT-1117)
