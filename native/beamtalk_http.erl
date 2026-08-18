@@ -68,7 +68,8 @@ Fields: `status` (integer), `headers` (list of [Name, Value] binary pairs),
     validate_request_options/3,
     to_gun_headers/2,
     from_gun_headers/1,
-    parse_url/1
+    parse_url/1,
+    build_gun_opts/2
 ]).
 
 -include_lib("beamtalk_runtime/include/beamtalk.hrl").
