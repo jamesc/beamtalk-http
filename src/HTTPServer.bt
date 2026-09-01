@@ -43,6 +43,26 @@
 /// Anything `HTTPServer start:handler:` accepts as a request handler: a
 /// plain block, an actor conforming to `HTTPHandler`, or a compiled
 /// `HTTPRouter`.
+///
+/// These two forms have different state-visibility semantics:
+///
+/// - A **block** (or a compiled `HTTPRouter`, which dispatches to blocks
+///   internally) is invoked as a direct function call inside cowboy's own
+///   request-handling process — there is no actor mailbox involved. Any
+///   `self.field` the block closes over is whatever was captured when the
+///   block/route table was built; it is never re-read later, even if the
+///   actor's real state changes afterward (including `attachX:`-style
+///   dependency injection performed after `start:handler:` has already
+///   run). A `PlugChain`'s composed handler is a block, so it inherits
+///   this too.
+/// - An **`HTTPHandler`** actor is invoked via a genuine actor message
+///   send (`handle:`), which runs inside the actor's own process — so
+///   `self.field` reads are always current and further actor calls behave
+///   normally.
+///
+/// Use a block/router for stateless request handling; back a route with an
+/// `HTTPHandler` actor when it needs live or post-startup-configurable
+/// state.
 type HTTPHandlerLike = Block(HTTPRequest, HTTPResponse) | HTTPHandler | HTTPRouter
 Actor subclass: HTTPServer native: beamtalk_http_server
 

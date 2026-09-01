@@ -1,0 +1,8 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// Test fixture: a plug that never calls `next` — short-circuits every request.
+Value subclass: BlockingPlug
+
+  call: _request :: HTTPRequest next: _next :: Block(HTTPRequest, HTTPResponse) -> HTTPResponse =>
+    HTTPResponse new: #{#status => 403, #body => "blocked"}

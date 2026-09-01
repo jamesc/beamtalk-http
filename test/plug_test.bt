@@ -1,0 +1,73 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// Tests for Plug / PlugChain. Fixtures `TaggingPlug` and `BlockingPlug`
+/// live in test/fixtures/.
+TestCase subclass: PlugChainTest
+  field: srv = nil
+
+  tearDown => self.srv isNil ifFalse: [self.srv stop]
+
+  makeRequest: path :: String -> HTTPRequest =>
+    HTTPRequest new: #{#method => "GET", #path => path, #body => ""}
+
+  // ===== Empty chain =====
+  testEmptyChainIsTransparent =>
+    handler := [:req |
+      HTTPResponse new: #{#status => 200, #body => "ok" ++ req path}
+    ]
+    composed := PlugChain chain: #() handler: handler
+    resp := composed value: (self makeRequest: "/x")
+    self assert: resp body equals: "ok/x"
+
+  // ===== Ordering: request transforms apply outermost-first =====
+  testRequestTransformsApplyInListOrder =>
+    handler := [:req |
+      HTTPResponse new: #{#status => 200, #body => req body ++ "[H]"}
+    ]
+    composed := PlugChain chain: #((TaggingPlug tag: "A"), (TaggingPlug tag: "B")) handler: handler
+    resp := composed value: (self makeRequest: "/")
+    self assert: resp body equals: "[A-in][B-in][H][B-out][A-out]"
+
+  // ===== Short-circuit: handler and downstream plugs never run =====
+  testShortCircuitSkipsHandler =>
+    handler := [:req |
+      HTTPResponse new: #{#status => 200, #body => "should not run"}
+    ]
+    composed := PlugChain chain: #(BlockingPlug new) handler: handler
+    resp := composed value: (self makeRequest: "/")
+    self assert: resp status equals: 403
+    self assert: resp body equals: "blocked"
+
+  // ===== A plug before the blocking one still wraps its response =====
+  testPlugBeforeShortCircuitStillWrapsTheResponse =>
+    handler := [:req |
+      HTTPResponse new: #{#status => 200, #body => "unreachable"}
+    ]
+    composed := PlugChain chain: #((TaggingPlug tag: "A"), BlockingPlug new) handler: handler
+    resp := composed value: (self makeRequest: "/")
+    self assert: resp status equals: 403
+    self assert: resp body equals: "blocked[A-out]"
+
+  // ===== Interop: PlugChain result works as an HTTPServer handler =====
+  testComposedChainWorksAsHttpServerHandler =>
+    handler := [:req |
+      HTTPResponse new: #{#status => 200, #body => req body ++ "done"}
+    ]
+    composed := PlugChain chain: #((TaggingPlug tag: "A")) handler: handler
+    self.srv := HTTPServer start: 0 handler: composed
+    url := "http://localhost:" ++ self.srv port asString ++ "/"
+    resp := (HTTPClient get: url) unwrap
+    self assert: resp body equals: "[A-in]done[A-out]"
+
+  // ===== Interop: PlugChain result works as a single HTTPRouter route handler =====
+  testComposedChainWorksAsRouterRouteHandler =>
+    inner := [:req |
+      HTTPResponse new: #{#status => 200, #body => req body ++ "routed"}
+    ]
+    piped := PlugChain chain: #((TaggingPlug tag: "R")) handler: inner
+    router := HTTPRouter build: [:r | r get: "/piped" handler: piped]
+    self.srv := HTTPServer start: 0 handler: router
+    url := "http://localhost:" ++ self.srv port asString ++ "/piped"
+    resp := (HTTPClient get: url) unwrap
+    self assert: resp body equals: "[R-in]routed[R-out]"

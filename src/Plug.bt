@@ -1,0 +1,45 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// Plug — composable request/response middleware for HTTP handlers.
+///
+/// A Plug wraps the *next* step of a handler pipeline. It can inspect or
+/// transform the request before passing it on, short-circuit by returning
+/// a response of its own without calling `next` at all, or post-process
+/// whatever `next` returns (add headers, log timing, catch errors) before
+/// returning it upward. This is the same "onion" composition Rack, Plug,
+/// and Express-style middleware use, expressed as a plain protocol so any
+/// Value can implement it.
+///
+/// A Plug runs wherever the handler it's chained into runs. For a block or
+/// `HTTPRouter` route handler, that's outside the owning actor's process
+/// (see `HTTPRouter` docs) — `self.field` reads inside a Plug only ever
+/// see whatever was captured when the chain was built. A Plug that needs
+/// live, mutable actor state should be backed by an actor implementing
+/// `HTTPHandler>>handle:` instead, not by `PlugChain`.
+///
+/// ## Writing a Plug
+/// ```beamtalk
+/// Value subclass: RequestLogger
+///   call: request :: HTTPRequest next: next :: Block(HTTPRequest, HTTPResponse) -> HTTPResponse =>
+///     response := next value: request
+///     Logger info: request method ++ " " ++ request path ++ " -> " ++ response status printString
+///     response
+/// ```
+///
+/// ## Example
+/// ```beamtalk
+/// pipeline := PlugChain
+///   chain: #(RequestLogger new)
+///   handler: [:req | HTTPResponse new: #{ #status => 200, #body => "ok" }]
+/// srv := HTTPServer start: 8080 handler: pipeline
+/// ```
+///
+/// @see PlugChain (composes a list of Plugs into a single handler block)
+/// @see HTTPHandler (the actor-pid handler style, for live actor state)
+Protocol define: Plug
+  /// Handle `request`. Call `next value: request` (or a transformed
+  /// request) to continue the pipeline and receive the downstream
+  /// `HTTPResponse`, or return a response directly without calling `next`
+  /// to short-circuit the rest of the chain.
+  call: request :: HTTPRequest next: next :: Block(HTTPRequest, HTTPResponse) -> HTTPResponse

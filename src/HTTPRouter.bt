@@ -53,6 +53,18 @@
 ///   filePath := req param: "path"   // => "css/main.css"
 /// ]
 /// ```
+///
+/// ## A note on `self` inside route handler blocks
+///
+/// Route handler blocks are invoked outside the owning actor's process
+/// (see `HTTPServer`'s `HTTPHandlerLike` doc for the full explanation).
+/// Any `self.field` a handler block closes over reflects a snapshot taken
+/// when the block/route table was built — it is never re-read, even if
+/// the actor's real state changes afterward. This means dependencies
+/// attached to the actor *after* `buildRouter:`/`startServer:` has already
+/// run will silently never be visible inside a handler. If a route needs
+/// live actor state, or state that can change after startup, back it with
+/// an actor implementing `HTTPHandler>>handle:` instead of a route block.
 sealed Value subclass: HTTPRouter
   /// Compiled route table (opaque Erlang term, internal).
   field: compiledRoutes = nil

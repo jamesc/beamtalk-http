@@ -1,0 +1,30 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// Test fixture: tags the request body on the way in and the response body
+/// on the way out with its own name, so a chain of several TaggingPlugs
+/// lets a single response body prove both the call order (outermost-first
+/// going in) and the reverse unwind order (outermost-last going out)
+/// without any shared mutable state between plugs.
+Value subclass: TaggingPlug
+  field: tag :: String = ""
+
+  class tag: t :: String -> TaggingPlug => self new: #{#tag => t}
+
+  call: request :: HTTPRequest next: next :: Block(HTTPRequest, HTTPResponse) -> HTTPResponse =>
+    tagged := HTTPRequest
+      new: #{
+        #method => request method,
+        #path => request path,
+        #headers => request headers,
+        #body => request body ++ "[" ++ self.tag ++ "-in]",
+        #queryParams => request queryParams,
+        #params => request params
+      }
+    response := next value: tagged
+    HTTPResponse
+      new: #{
+        #status => response status,
+        #headers => response headers,
+        #body => response body ++ "[" ++ self.tag ++ "-out]"
+      }

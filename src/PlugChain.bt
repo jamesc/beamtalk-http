@@ -1,0 +1,42 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// PlugChain — compiles an ordered list of `Plug`s and a terminal handler
+/// into a single `Block(HTTPRequest, HTTPResponse)`, usable anywhere an
+/// `HTTPHandlerLike` block is accepted: `HTTPServer start:handler:`, or a
+/// single route's `handler:` inside `HTTPRouter build:`.
+///
+/// Plugs run in list order on the way in; a plug that calls `next` sees
+/// the response on the way back out in reverse order, so the first plug in
+/// the list is the outermost layer and gets the last word on the response.
+///
+/// ## Examples
+/// ```beamtalk
+/// handler := PlugChain
+///   chain: #(LoggerPlug new, AuthPlug new)
+///   handler: [:req | HTTPResponse new: #{ #status => 200, #body => "ok" }]
+/// ```
+///
+/// @see Plug (the protocol each element of `plugs` implements)
+sealed Value subclass: PlugChain
+
+  /// Compose `plugs` around `handler`, outermost-first.
+  class chain: plugs :: List(Plug) handler: handler :: Block(HTTPRequest, HTTPResponse) -> Block(HTTPRequest, HTTPResponse) =>
+    self
+      wrapFrom: 1
+      plugs: plugs
+      handler: handler
+
+  /// Recursively wrap `handler` in `plugs[index..]`; `plugs[index]` ends up
+  /// as the outermost layer of the returned block.
+  class wrapFrom: index :: Integer plugs: plugs :: List(Plug) handler: handler :: Block(HTTPRequest, HTTPResponse) -> Block(HTTPRequest, HTTPResponse) =>
+    index > plugs size
+      ifTrue: [handler]
+      ifFalse: [
+        plug := plugs at: index
+        rest := self
+          wrapFrom: index + 1
+          plugs: plugs
+          handler: handler
+        [:req | plug call: req next: rest]
+      ]
