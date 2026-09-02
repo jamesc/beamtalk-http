@@ -1,0 +1,29 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// Tests for RequestLogger — verifies it is transparent to the request/
+/// response pair it wraps (its logging side effect isn't independently
+/// observable from BUnit).
+TestCase subclass: RequestLoggerTest
+
+  makeRequest: path :: String -> HTTPRequest =>
+    HTTPRequest new: #{#method => "GET", #path => path, #body => ""}
+
+  testPassesResponseThroughUnchanged =>
+    handler := [:req |
+      HTTPResponse new: #{#status => 200, #body => "ok" ++ req path}
+    ]
+    composed := PlugChain chain: #(RequestLogger new) handler: handler
+    resp := composed value: (self makeRequest: "/x")
+    self assert: resp status equals: 200
+    self assert: resp body equals: "ok/x"
+
+  testWorksAsHttpServerHandler =>
+    handler := [:req | HTTPResponse new: #{#status => 201, #body => "created"}]
+    composed := PlugChain chain: #(RequestLogger new) handler: handler
+    srv := HTTPServer start: 0 handler: composed
+    url := "http://localhost:" ++ srv port asString ++ "/"
+    resp := (HTTPClient get: url) unwrap
+    self assert: resp status equals: 201
+    self assert: resp body equals: "created"
+    srv stop

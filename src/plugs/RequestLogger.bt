@@ -1,0 +1,26 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// RequestLogger — a ready-made `Plug` that logs the method, path, and
+/// resulting status of every request that passes through it. Add it as
+/// the outermost layer of a `PlugChain` so it sees the final response
+/// after every other plug and the handler have run.
+///
+/// ## Examples
+/// ```beamtalk
+/// handler := PlugChain
+///   chain: #(RequestLogger new)
+///   handler: [:req | HTTPResponse new: #{ #status => 200, #body => "ok" }]
+/// srv := HTTPServer start: 8080 handler: handler
+/// ```
+///
+/// @see Plug (the protocol this implements)
+/// @see PlugChain (composes this with other plugs and a terminal handler)
+Value subclass: RequestLogger
+
+  call: request :: HTTPRequest next: next :: Block(HTTPRequest, HTTPResponse) -> HTTPResponse =>
+    response := next value: request
+    Logger info: request method ++ " " ++ request path metadata: #{
+      "status" => response status
+    }
+    response

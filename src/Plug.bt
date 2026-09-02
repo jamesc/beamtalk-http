@@ -37,6 +37,7 @@
 ///
 /// @see PlugChain (composes a list of Plugs into a single handler block)
 /// @see HTTPHandler (the actor-pid handler style, for live actor state)
+/// @see RequestLogger (a ready-made request-logging Plug)
 Protocol define: Plug
   /// Handle `request`. Call `next value: request` (or a transformed
   /// request) to continue the pipeline and receive the downstream
