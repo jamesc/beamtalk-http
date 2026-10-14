@@ -28,7 +28,7 @@ HTTPS is enabled automatically when the URL scheme is `https`.
 ## Response Format
 
 All requests return an `HTTPResponse` value object constructed via the
-generated HTTPResponse keyword constructor `class_status:headers:body:/5`.
+generated HTTPResponse keyword constructor `class_status:headers:body:/4`.
 Fields: `status` (integer), `headers` (list of [Name, Value] binary pairs),
 `body` (String).
 
@@ -396,7 +396,7 @@ collect_response(ConnPid, StreamRef, MRef, Deadline, Selector) ->
 make_response(Status, GunHeaders, Body) ->
     BtHeaders = from_gun_headers(GunHeaders),
     ?BT_CLASS_MODULE_HTTPResponse:'class_status:headers:body:'(
-        undefined, undefined, Status, BtHeaders, Body
+        undefined, Status, BtHeaders, Body
     ).
 
 -doc """

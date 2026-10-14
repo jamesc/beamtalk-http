@@ -11,7 +11,7 @@ Provides the canonical Dialyzer-visible type `t()` for HTTPResponse value
 objects returned by `beamtalk_http`. The runtime map structure is produced
 by the Beamtalk compiler from `state:` declarations in `src/HTTPResponse.bt`
 and constructed by the generated HTTPResponse keyword constructor
-`class_status:headers:body:/5`.
+`class_status:headers:body:/4`.
 
 This module is a type-only companion to `beamtalk_http` — it exports no
 functions. The generated HTTPResponse module is excluded from the Dialyzer PLT

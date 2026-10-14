@@ -88,7 +88,7 @@ build_request(Req0) ->
     {Body, Req1} = read_body(Req0),
     QsMap = parse_query_params(Req1),
     HttpRequest = ?BT_CLASS_MODULE_HTTPRequest:'class_method:path:headers:body:queryParams:params:'(
-        undefined, undefined, Method, Path, Headers, Body, QsMap, #{}
+        undefined, Method, Path, Headers, Body, QsMap, #{}
     ),
     {HttpRequest, Req1}.
 
@@ -164,7 +164,7 @@ call_handler(Handler, Request) when is_pid(Handler) ->
 -spec make_error_response(integer(), binary()) -> beamtalk_http_response:t().
 make_error_response(Status, Body) ->
     ?BT_CLASS_MODULE_HTTPResponse:'class_status:headers:body:'(
-        undefined, undefined, Status, [[<<"content-type">>, <<"text/plain">>]], Body
+        undefined, Status, [[<<"content-type">>, <<"text/plain">>]], Body
     ).
 
 %% @private Extract a field from an HTTPResponse value object.
