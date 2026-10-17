@@ -370,12 +370,24 @@ parse_url_garbage_test() ->
 %%% ============================================================================
 
 build_gun_opts_tcp_test() ->
-    ?assertEqual(#{transport => tcp}, beamtalk_http:build_gun_opts(tcp, "example.com")).
+    ?assertEqual(
+        #{transport => tcp, connect_timeout => 2000, retry_timeout => 100},
+        beamtalk_http:build_gun_opts(tcp, "example.com")
+    ).
 
 build_gun_opts_tls_test() ->
-    #{transport := Transport, tls_opts := TlsOpts} =
-        beamtalk_http:build_gun_opts(tls, "example.com"),
+    #{
+        transport := Transport,
+        connect_timeout := ConnectTimeout,
+        tls_handshake_timeout := HandshakeTimeout,
+        retry_timeout := RetryTimeout,
+        tls_opts := TlsOpts
+    } = beamtalk_http:build_gun_opts(tls, "example.com"),
     ?assertEqual(tls, Transport),
+    %% gun defaults both to infinity: one dropped SYN hung the whole request.
+    ?assertEqual(2000, ConnectTimeout),
+    ?assertEqual(5000, HandshakeTimeout),
+    ?assertEqual(100, RetryTimeout),
     ?assertEqual({verify, verify_peer}, lists:keyfind(verify, 1, TlsOpts)),
     {cacerts, Cacerts} = lists:keyfind(cacerts, 1, TlsOpts),
     ?assert(is_list(Cacerts)),
