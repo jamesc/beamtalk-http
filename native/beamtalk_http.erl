@@ -77,6 +77,14 @@ Fields: `status` (integer), `headers` (list of [Name, Value] binary pairs),
 -include("beamtalk_classes.hrl").
 
 -define(DEFAULT_TIMEOUT, 30000).
+%% Per-attempt bounds on gun's connect phase. gun defaults both to `infinity`,
+%% so one dropped SYN or stalled handshake held the connection until the whole
+%% request deadline expired. Bounded, the attempt fails fast and gun's built-in
+%% retry (5 attempts) reconnects after `?RETRY_TIMEOUT`; `await_up` still caps
+%% the total at the request's remaining deadline.
+-define(CONNECT_TIMEOUT, 2000).
+-define(TLS_HANDSHAKE_TIMEOUT, 5000).
+-define(RETRY_TIMEOUT, 100).
 
 %%% ============================================================================
 %%% dispatch/3 + has_method/1 (compiled stdlib interface)
@@ -449,12 +457,15 @@ parse_url(Url) ->
 %% - `cacerts` — use the system CA bundle (OTP 25.1+)
 %% - `server_name_indication` — send SNI so virtual hosts present the right cert
 %% - `customize_hostname_check` — enforce RFC 6125 hostname matching for HTTPS
+%%
+%% Both transports bound the connect phase (see `?CONNECT_TIMEOUT`).
 -spec build_gun_opts(tcp | tls, string()) -> map().
 build_gun_opts(tcp, _Host) ->
-    #{transport => tcp};
+    connect_opts(#{transport => tcp});
 build_gun_opts(tls, Host) ->
-    #{
+    connect_opts(#{
         transport => tls,
+        tls_handshake_timeout => ?TLS_HANDSHAKE_TIMEOUT,
         tls_opts => [
             {verify, verify_peer},
             {cacerts, public_key:cacerts_get()},
@@ -463,7 +474,10 @@ build_gun_opts(tls, Host) ->
                 {match_fun, public_key:pkix_verify_hostname_match_fun(https)}
             ]}
         ]
-    }.
+    }).
+
+connect_opts(Opts) ->
+    Opts#{connect_timeout => ?CONNECT_TIMEOUT, retry_timeout => ?RETRY_TIMEOUT}.
 
 -doc """
 Convert Beamtalk headers list to gun headers format.
