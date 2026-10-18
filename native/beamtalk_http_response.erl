@@ -9,7 +9,7 @@ Type definitions for the HTTPResponse Beamtalk value object (BT-1162).
 
 Provides the canonical Dialyzer-visible type `t()` for HTTPResponse value
 objects returned by `beamtalk_http`. The runtime map structure is produced
-by the Beamtalk compiler from `state:` declarations in `src/HTTPResponse.bt`
+by the Beamtalk compiler from `field:` declarations in `src/httpresponse.bt`
 and constructed by the generated HTTPResponse keyword constructor
 `class_status:headers:body:/4`.
 
@@ -25,7 +25,7 @@ map structure so that `-spec` annotations in `beamtalk_http` can reference
 -doc """
 The map type for a Beamtalk HTTPResponse value object.
 
-Fields mirror the `field:` declarations in `src/HTTPResponse.bt`:
+Fields mirror the `field:` declarations in `src/httpresponse.bt`:
   field: status  :: Integer = 0
   field: headers :: List    = #()
   field: body    :: String  = ""

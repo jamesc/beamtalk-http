@@ -390,7 +390,7 @@ collect_response(ConnPid, StreamRef, MRef, Deadline, Selector) ->
 
 %% @private Build a Beamtalk HTTPResponse using the generated keyword constructor.
 %%
-%% Calls the constructor generated from `state:` declarations in `HTTPResponse.bt`.
+%% Calls the constructor generated from `field:` declarations in `httpresponse.bt`.
 %% This provides compile-time arity safety: if a field is added or removed from
 %% HTTPResponse, the arity of this call changes and the compiler catches the mismatch.
 %%

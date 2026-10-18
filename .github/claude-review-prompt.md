@@ -165,7 +165,7 @@ root:
    Write `[]` when there are none. Each element:
 
    {
-     "path": "src/HTTPClient.bt",
+     "path": "src/httpclient.bt",
      "line": 123,
      "start_line": 120,
      "side": "RIGHT",
