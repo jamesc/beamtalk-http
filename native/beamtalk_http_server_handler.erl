@@ -33,7 +33,27 @@ or an HTTPRouter Value object (map with `compiledRoutes` key, BT-1344).
 """.
 -spec init(cowboy_req:req(), map()) -> {ok, cowboy_req:req(), map()}.
 init(Req0, #{handler := Handler} = State) ->
-    {HttpRequest, Req1} = build_request(Req0),
+    case build_request(Req0) of
+        {ok, HttpRequest, Req1} ->
+            dispatch_and_reply(Handler, HttpRequest, Req1, State);
+        {error, Field, Req1} ->
+            %% BT-4171: non-UTF-8 bytes at a text boundary — the handler
+            %% never runs; answer 400 (the field name leaks no values).
+            Req = cowboy_req:reply(
+                400,
+                #{<<"content-type">> => <<"text/plain">>},
+                iolist_to_binary([
+                    <<"Bad Request: invalid UTF-8 in ">>, atom_to_binary(Field, utf8)
+                ]),
+                Req1
+            ),
+            {ok, Req, State}
+    end.
+
+%% @private Dispatch a validated request to the handler and reply.
+-spec dispatch_and_reply(term(), map(), cowboy_req:req(), map()) ->
+    {ok, cowboy_req:req(), map()}.
+dispatch_and_reply(Handler, HttpRequest, Req1, State) ->
     try dispatch_handler(Handler, HttpRequest) of
         Response when is_map(Response) ->
             Status = get_response_field(Response, status, 200),
@@ -76,10 +96,13 @@ init(Req0, #{handler := Handler} = State) ->
 
 %% @private Build an HTTPRequest value object from a cowboy request.
 %%
-%% Returns `{HTTPRequest, UpdatedReq}` — the updated Req must be used for
-%% the reply, since `read_body` consumes the body stream from the socket.
+%% Returns `{ok, HTTPRequest, UpdatedReq}` — the updated Req must be used
+%% for the reply, since `read_body` consumes the body stream from the
+%% socket. Answers `{error, Field, UpdatedReq}` when a text field holds
+%% non-UTF-8 bytes (see `validate_text_fields/4`).
 -dialyzer({nowarn_function, build_request/1}).
--spec build_request(cowboy_req:req()) -> {map(), cowboy_req:req()}.
+-spec build_request(cowboy_req:req()) ->
+    {ok, map(), cowboy_req:req()} | {error, atom(), cowboy_req:req()}.
 build_request(Req0) ->
     Method = cowboy_req:method(Req0),
     Path = cowboy_req:path(Req0),
@@ -87,10 +110,72 @@ build_request(Req0) ->
     Headers = [[Name, Value] || {Name, Value} <- HeadersList],
     {Body, Req1} = read_body(Req0),
     QsMap = parse_query_params(Req1),
-    HttpRequest = ?BT_CLASS_MODULE_HTTPRequest:'class_method:path:headers:body:queryParams:params:'(
-        undefined, Method, Path, Headers, Body, QsMap, #{}
-    ),
-    {HttpRequest, Req1}.
+    case validate_text_fields(Method, Path, Headers, QsMap) of
+        ok ->
+            HttpRequest = ?BT_CLASS_MODULE_HTTPRequest:'class_method:path:headers:body:queryParams:params:'(
+                undefined, Method, Path, Headers, Body, QsMap, #{}
+            ),
+            {ok, HttpRequest, Req1};
+        {error, Field} ->
+            {error, Field, Req1}
+    end.
+
+%% @private Validate the request's text fields as UTF-8 (BT-4171).
+%%
+%% This is HTTP's native text boundary: method, path, header names/values,
+%% and query keys/values are declared `String` on `HTTPRequest`, so they
+%% are validated with `beamtalk_primitive:is_utf8/1` (the same check as
+%% `beamtalk_binary:check_utf8/1`, already released — reused here rather
+%% than duplicating validation logic). A request with non-text there is
+%% rejected with 400 instead of flowing through as Binary.
+%%
+%% The body is intentionally NOT validated: unlike the other fields it
+%% legitimately carries bytes (file uploads and other non-text payloads),
+%% and a valid UTF-8 body already answers `String`. Route params need no
+%% check either: they are `/`-separated substrings of the validated path,
+%% so they are valid UTF-8 iff the path is.
+-spec validate_text_fields(binary(), binary(), [[binary()]], map()) ->
+    ok | {error, atom()}.
+validate_text_fields(Method, Path, Headers, QsMap) ->
+    Checks =
+        [{method, Method}, {path, Path}] ++
+            header_checks(Headers) ++
+            qs_checks(QsMap),
+    first_invalid(Checks).
+
+%% @private One check per header name and value.
+-spec header_checks([[binary()]]) -> [{atom(), binary()}].
+header_checks(Headers) ->
+    lists:flatmap(
+        fun([Name, Value]) -> [{header_name, Name}, {header_value, Value}] end,
+        Headers
+    ).
+
+%% @private One check per query key and value.
+-spec qs_checks(map()) -> [{atom(), term()}].
+qs_checks(QsMap) ->
+    lists:flatmap(
+        fun({K, V}) -> [{query_key, K} | qs_value_check(V)] end,
+        maps:to_list(QsMap)
+    ).
+
+%% @private Query values are binaries (`value_or_true/1` maps valueless
+%% flags to `<<"true">>`); anything else skips validation.
+-spec qs_value_check(term()) -> [{atom(), term()}].
+qs_value_check(V) when is_binary(V) -> [{query_value, V}];
+qs_value_check(_) -> [].
+
+%% @private First check whose binary is not valid UTF-8, or `ok`.
+-spec first_invalid([{atom(), term()}]) -> ok | {error, atom()}.
+first_invalid([]) ->
+    ok;
+first_invalid([{Field, Bin} | Rest]) when is_binary(Bin) ->
+    case beamtalk_primitive:is_utf8(Bin) of
+        true -> first_invalid(Rest);
+        false -> {error, Field}
+    end;
+first_invalid([_ | Rest]) ->
+    first_invalid(Rest).
 
 %% @private Read the full request body (may be chunked).
 %%
@@ -133,6 +218,9 @@ dispatch_handler(Handler, Request) ->
     call_handler(Handler, Request).
 
 %% @private Route dispatch: match method+path, inject params, call handler.
+%%
+%% BT-4171: params need no validation — Method/Path were validated in
+%% build_request/1 and route params are substrings of Path.
 -spec dispatch_router(list(), term(), map()) -> beamtalk_http_response:t().
 dispatch_router(Routes, NotFoundHandler, Request) ->
     Method = maps:get(method, Request),
