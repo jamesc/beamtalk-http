@@ -52,5 +52,11 @@ sealed Value subclass: HTTPRequest
   param: name :: String -> String => self.params at: name
 
   /// Human-readable representation: "an HTTPRequest(GET /path)".
+  /// The fields convert explicitly (BT-4172): cowboy hands the handler
+  /// binaries, which stay Strings across the BT-4170 flip this way.
   printString -> String =>
-    "an HTTPRequest(" ++ self.method ++ " " ++ self.path ++ ")"
+    "an HTTPRequest("
+      ++ self.method asStringUnchecked
+      ++ " "
+      ++ self.path asStringUnchecked
+      ++ ")"

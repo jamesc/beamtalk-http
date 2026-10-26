@@ -53,7 +53,10 @@ TestCase subclass: HTTPServerTest
       start: 0
       handler: [:req |
         body := req body
-        HTTPResponse new: #{#status => 200, #body => "echo: " ++ body}
+        HTTPResponse new: #{
+          #status => 200,
+          #body => "echo: " ++ body asStringUnchecked
+        }
       ]
     url := "http://localhost:" ++ self.srv port asString ++ "/echo"
     resp := (HTTPClient post: url body: "test data") unwrap
@@ -114,11 +117,21 @@ TestCase subclass: HTTPServerTest
 
   testClassIdentity => self assert: HTTPServer superclass equals: Actor
 
+  // BT-4172: binary fields still render — `asStringUnchecked` is exact
+  // for valid UTF-8 and keeps printString working across the flip.
+  testHTTPRequestPrintStringWithBinaryFields =>
+    req := HTTPRequest
+      new: #{
+        #method => Binary fromBytes: #(71, 69, 84),
+        #path => Binary fromBytes: #(47, 120)
+      }
+    self assert: req printString equals: "an HTTPRequest(GET /x)"
+
   testHTTPRequestPrintString =>
     self.srv := HTTPServer start: 0 handler: [:req |
       HTTPResponse new: #{#status => 200, #body => req printString}
     ]
     url := "http://localhost:" ++ self.srv port asString ++ "/identity"
     resp := (HTTPClient get: url) unwrap
-    ps := resp body
+    ps := resp body asStringUnchecked
     self assert: (ps startsWith: "an HTTPRequest(")

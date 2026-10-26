@@ -52,7 +52,10 @@ TestCase subclass: PlugChainTest
   // ===== Interop: PlugChain result works as an HTTPServer handler =====
   testComposedChainWorksAsHttpServerHandler =>
     handler := [:req |
-      HTTPResponse new: #{#status => 200, #body => req body ++ "done"}
+      HTTPResponse new: #{
+        #status => 200,
+        #body => req body asStringUnchecked ++ "done"
+      }
     ]
     composed := PlugChain chain: #((TaggingPlug tag: "A")) handler: handler
     self.srv := HTTPServer start: 0 handler: composed
@@ -63,7 +66,10 @@ TestCase subclass: PlugChainTest
   // ===== Interop: PlugChain result works as a single HTTPRouter route handler =====
   testComposedChainWorksAsRouterRouteHandler =>
     inner := [:req |
-      HTTPResponse new: #{#status => 200, #body => req body ++ "routed"}
+      HTTPResponse new: #{
+        #status => 200,
+        #body => req body asStringUnchecked ++ "routed"
+      }
     ]
     piped := PlugChain chain: #((TaggingPlug tag: "R")) handler: inner
     router := HTTPRouter build: [:r | r get: "/piped" handler: piped]

@@ -17,7 +17,7 @@ Value subclass: TaggingPlug
         #method => request method,
         #path => request path,
         #headers => request headers,
-        #body => request body ++ "[" ++ self.tag ++ "-in]",
+        #body => request body asStringUnchecked ++ "[" ++ self.tag ++ "-in]",
         #queryParams => request queryParams,
         #params => request params
       }
@@ -26,5 +26,5 @@ Value subclass: TaggingPlug
       new: #{
         #status => response status,
         #headers => response headers,
-        #body => response body ++ "[" ++ self.tag ++ "-out]"
+        #body => response body asStringUnchecked ++ "[" ++ self.tag ++ "-out]"
       }
