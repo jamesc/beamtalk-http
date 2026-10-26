@@ -68,7 +68,8 @@ TestCase subclass: HTTPTest
 
   testResponseBodyIsString =>
     resp := (HTTPClient get: self.baseUrl ++ "/get") unwrap
-    self assert: (resp body class name) equals: #String
+    // BT-4172: explicit conversion — the client hands the test binaries.
+    self assert: (resp body asStringUnchecked class name) equals: #String
 
   // ===== HTTPResponse — headers =====
   testResponseHeadersIsList =>

@@ -20,7 +20,8 @@ Value subclass: RequestLogger
 
   call: request :: HTTPRequest next: next :: Block(HTTPRequest, HTTPResponse) -> HTTPResponse =>
     response := next value: request
-    Logger info: request method ++ " " ++ request path metadata: #{
+    // BT-4172: convert explicitly — the fields arrive as binaries.
+    Logger info: request method asStringUnchecked ++ " " ++ request path asStringUnchecked metadata: #{
       "status" => response status
     }
     response

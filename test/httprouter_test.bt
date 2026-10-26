@@ -54,9 +54,14 @@ TestCase subclass: HTTPRouterTest
   testBuilderPostRoute =>
     router := HTTPRouter
       build: [:r |
-        r post: "/items" handler: [:req |
-          HTTPResponse new: #{#status => 201, #body => "created: " ++ req body}
-        ]
+        r
+          post: "/items"
+          handler: [:req |
+            HTTPResponse new: #{
+              #status => 201,
+              #body => "created: " ++ req body asStringUnchecked
+            }
+          ]
       ]
     self.srv := HTTPServer start: 0 handler: router
     url := "http://localhost:" ++ self.srv port asString ++ "/items"
@@ -99,7 +104,11 @@ TestCase subclass: HTTPRouterTest
           handler: [:req |
             uid := req param: "userId"
             pid := req param: "postId"
-            HTTPResponse new: #{#status => 200, #body => uid ++ ":" ++ pid}
+            HTTPResponse
+              new: #{
+                #status => 200,
+                #body => uid asStringUnchecked ++ ":" ++ pid asStringUnchecked
+              }
           ]
       ]
     self.srv := HTTPServer start: 0 handler: router
@@ -168,7 +177,7 @@ TestCase subclass: HTTPRouterTest
         ]
         r
           notFound: [:req |
-            body := "Custom 404: " ++ req path
+            body := "Custom 404: " ++ req path asStringUnchecked
             HTTPResponse new: #{#status => 404, #body => body}
           ]
       ]
@@ -243,7 +252,10 @@ TestCase subclass: HTTPRouterTest
           put: "/items/:id"
           handler: [:req |
             id := req param: "id"
-            HTTPResponse new: #{#status => 200, #body => "updated " ++ id}
+            HTTPResponse new: #{
+              #status => 200,
+              #body => "updated " ++ id asStringUnchecked
+            }
           ]
       ]
     self.srv := HTTPServer start: 0 handler: router
@@ -258,7 +270,10 @@ TestCase subclass: HTTPRouterTest
           patch: "/items/:id"
           handler: [:req |
             id := req param: "id"
-            HTTPResponse new: #{#status => 200, #body => "patched " ++ id}
+            HTTPResponse new: #{
+              #status => 200,
+              #body => "patched " ++ id asStringUnchecked
+            }
           ]
       ]
     self.srv := HTTPServer start: 0 handler: router
