@@ -30,6 +30,7 @@ indicating no match or wrong method.
 -type segment() :: binary() | {param, binary()} | {wildcard, binary()}.
 -type compiled_route() :: {binary(), [segment()], fun()}.
 -type compiled_routes() :: [compiled_route()].
+-type path_param() :: binary() | beamtalk_string:t().
 
 -export_type([compiled_routes/0]).
 
@@ -45,12 +46,16 @@ Each route is `{Method, Path, Handler}` or `[Method, Path, Handler]` where:
   - `Path` — path pattern as a binary (e.g. `<<"/users/:id">>`)
   - `Handler` — a fun/1 (block) to call with the enriched request
 
+BT-4173: Method/Path arrive tagged when called from Beamtalk — they are
+unwrapped to bytes here; matching stays byte-level.
+
 The list form is used when called from Beamtalk (where `#(a, b, c)` produces
 an Erlang list). The tuple form is accepted for Erlang-native callers.
 
 Returns a compiled route list for use with `match/3`.
 """.
--spec compile([{binary(), binary(), fun()} | [binary() | fun()]]) -> compiled_routes().
+-spec compile([{path_param(), path_param(), fun()} | [path_param() | fun()]]) ->
+    compiled_routes().
 compile(Routes) when is_list(Routes) ->
     [compile_route(R) || R <- Routes].
 
@@ -62,30 +67,36 @@ Returns:
   - `method_not_allowed` — path matched but method did not
   - `not_found` — no path match at all
 """.
--spec match(compiled_routes(), binary(), binary()) ->
+-spec match(compiled_routes(), path_param(), path_param()) ->
     {ok, fun(), map()} | method_not_allowed | not_found.
 match(Routes, Method, Path) ->
-    Segments = split_path(Path),
-    match_routes(Routes, Method, Segments, false).
+    %% BT-4173: method/path arrive tagged from Beamtalk — matching is
+    %% byte-level, so unwrap; captured params are re-tagged (see below).
+    Segments = split_path(unwrap_string(Path)),
+    match_routes(Routes, unwrap_string(Method), Segments, false).
 
 %%% ============================================================================
 %%% Internal — compilation
 %%% ============================================================================
 
--spec compile_route({binary(), binary(), fun()} | [binary() | fun()]) -> compiled_route().
-compile_route({Method, Path, Handler}) when
-    is_binary(Method), is_binary(Path), is_function(Handler)
-->
-    Segments = parse_pattern(Path),
-    validate_segments(Segments, Path),
-    {Method, Segments, Handler};
-compile_route([Method, Path, Handler]) when
-    is_binary(Method), is_binary(Path), is_function(Handler)
-->
-    Segments = parse_pattern(Path),
-    validate_segments(Segments, Path),
-    {Method, Segments, Handler};
+-spec compile_route({path_param(), path_param(), fun()} | [path_param() | fun()]) ->
+    compiled_route().
+compile_route({Method, Path, Handler}) when is_function(Handler) ->
+    compile_route_unwrapped(unwrap_string(Method), unwrap_string(Path), Handler);
+compile_route([Method, Path, Handler]) when is_function(Handler) ->
+    compile_route_unwrapped(unwrap_string(Method), unwrap_string(Path), Handler);
 compile_route(_) ->
+    type_error('compile:', <<"Each route must be [Method, Path, Handler]">>).
+
+%% @private Compile one route from unwrapped method/path bytes.
+-spec compile_route_unwrapped(term(), term(), fun()) -> compiled_route().
+compile_route_unwrapped(Method, Path, Handler) when
+    is_binary(Method), is_binary(Path)
+->
+    Segments = parse_pattern(Path),
+    validate_segments(Segments, Path),
+    {Method, Segments, Handler};
+compile_route_unwrapped(_, _, _) ->
     type_error('compile:', <<"Each route must be [Method, Path, Handler]">>).
 
 %% @private Parse a path pattern into segments.
@@ -190,9 +201,11 @@ match_segments(_Remaining, [], _Params) ->
 match_segments([{wildcard, Name} | _], Segments, Params) ->
     %% Wildcard captures all remaining segments joined with /
     Value = join_segments(Segments),
-    {ok, Params#{Name => Value}};
+    %% BT-4173: params answer Strings (`req param: "id"` looks up a
+    %% String key); non-text bytes stay Binary.
+    {ok, Params#{maybe_tag(Name) => maybe_tag(Value)}};
 match_segments([{param, Name} | PatternRest], [Seg | SegsRest], Params) ->
-    match_segments(PatternRest, SegsRest, Params#{Name => Seg});
+    match_segments(PatternRest, SegsRest, Params#{maybe_tag(Name) => maybe_tag(Seg)});
 match_segments([Literal | PatternRest], [Seg | SegsRest], Params) when is_binary(Literal) ->
     case Literal =:= Seg of
         true -> match_segments(PatternRest, SegsRest, Params);
@@ -220,3 +233,18 @@ type_error(Selector, Hint) ->
     Error1 = beamtalk_error:with_selector(Error0, Selector),
     Error2 = beamtalk_error:with_hint(Error1, Hint),
     beamtalk_error:raise(Error2).
+
+%% @private Unwrap a tagged String to bytes; anything else passes through.
+-spec unwrap_string(term()) -> term().
+unwrap_string({beamtalk_string, Bin}) when is_binary(Bin) -> Bin;
+unwrap_string(Other) -> Other.
+
+%% @private Tag bytes as a String when valid UTF-8, else leave as Binary.
+-spec maybe_tag(term()) -> term().
+maybe_tag(Bin) when is_binary(Bin) ->
+    case beamtalk_primitive:is_utf8(Bin) of
+        true -> beamtalk_primitive:string_from_binary(Bin);
+        false -> Bin
+    end;
+maybe_tag(Other) ->
+    Other.

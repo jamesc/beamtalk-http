@@ -65,7 +65,7 @@ match_single_param_test() ->
     H = fun(_) -> ok end,
     Routes = beamtalk_http_router:compile([{<<"GET">>, <<"/users/:id">>, H}]),
     {ok, _, Params} = beamtalk_http_router:match(Routes, <<"GET">>, <<"/users/42">>),
-    ?assertEqual(#{<<"id">> => <<"42">>}, Params).
+    ?assertEqual(#{{beamtalk_string, <<"id">>} => {beamtalk_string, <<"42">>}}, Params).
 
 match_multiple_params_test() ->
     H = fun(_) -> ok end,
@@ -75,7 +75,13 @@ match_multiple_params_test() ->
     {ok, _, Params} = beamtalk_http_router:match(
         Routes, <<"GET">>, <<"/users/7/posts/99">>
     ),
-    ?assertEqual(#{<<"userId">> => <<"7">>, <<"postId">> => <<"99">>}, Params).
+    ?assertEqual(
+        #{
+            {beamtalk_string, <<"userId">>} => {beamtalk_string, <<"7">>},
+            {beamtalk_string, <<"postId">>} => {beamtalk_string, <<"99">>}
+        },
+        Params
+    ).
 
 param_captures_any_segment_test() ->
     H = fun(_) -> ok end,
@@ -83,7 +89,9 @@ param_captures_any_segment_test() ->
     {ok, _, Params} = beamtalk_http_router:match(
         Routes, <<"GET">>, <<"/files/my-document.txt">>
     ),
-    ?assertEqual(#{<<"name">> => <<"my-document.txt">>}, Params).
+    ?assertEqual(
+        #{{beamtalk_string, <<"name">>} => {beamtalk_string, <<"my-document.txt">>}}, Params
+    ).
 
 %%% ============================================================================
 %%% Wildcard tests
@@ -95,7 +103,7 @@ match_wildcard_single_segment_test() ->
     {ok, _, Params} = beamtalk_http_router:match(
         Routes, <<"GET">>, <<"/static/style.css">>
     ),
-    ?assertEqual(#{<<"path">> => <<"style.css">>}, Params).
+    ?assertEqual(#{{beamtalk_string, <<"path">>} => {beamtalk_string, <<"style.css">>}}, Params).
 
 match_wildcard_multiple_segments_test() ->
     H = fun(_) -> ok end,
@@ -103,7 +111,7 @@ match_wildcard_multiple_segments_test() ->
     {ok, _, Params} = beamtalk_http_router:match(
         Routes, <<"GET">>, <<"/static/css/main.css">>
     ),
-    ?assertEqual(#{<<"path">> => <<"css/main.css">>}, Params).
+    ?assertEqual(#{{beamtalk_string, <<"path">>} => {beamtalk_string, <<"css/main.css">>}}, Params).
 
 %%% ============================================================================
 %%% Method dispatch tests

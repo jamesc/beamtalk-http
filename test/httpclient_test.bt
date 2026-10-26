@@ -47,7 +47,7 @@ TestCase subclass: HTTPClientTest
     // gives the bracketed "#Pid<X.Y.Z>" form — so strip the brackets to compare.
     client := HTTPClient spawn
     innerPid := (((client pid) asString) replaceAll: "#Pid<" with: "") replaceAll: ">" with: ""
-    self assert: client printString equals: (("Actor(HTTPClient, " concat: innerPid) concat: ")")
+    self assert: client printString equals: ("Actor(HTTPClient, " ++ innerPid ++ ")")
     self assert: client stop equals: #ok
 
   testClassIdentity =>

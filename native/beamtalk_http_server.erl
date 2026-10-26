@@ -93,11 +93,14 @@ handle_call({Selector, Args, PropCtx}, From, State) when is_map(PropCtx) ->
 handle_call({port, []}, _From, #{actual_port := ActualPort} = State) ->
     {reply, ActualPort, State};
 handle_call({printString, []}, _From, #{actual_port := ActualPort} = State) ->
-    Str = iolist_to_binary([
-        <<"an HTTPServer(port: ">>,
-        integer_to_binary(ActualPort),
-        <<")">>
-    ]),
+    %% BT-4173: printString answers a String.
+    Str = beamtalk_primitive:string_from_binary(
+        iolist_to_binary([
+            <<"an HTTPServer(port: ">>,
+            integer_to_binary(ActualPort),
+            <<")">>
+        ])
+    ),
     {reply, Str, State};
 handle_call(Msg, _From, State) ->
     ?LOG_WARNING("Unknown call", #{message => Msg}),
@@ -208,6 +211,9 @@ validate_handler(_) ->
 
 %% @private Parse an IP address string to a tuple.
 -spec parse_ip(term()) -> inet:ip_address().
+parse_ip({beamtalk_string, Bin}) when is_binary(Bin) ->
+    %% BT-4173: a String bind address arrives tagged — unwrap it.
+    parse_ip(Bin);
 parse_ip(Bin) when is_binary(Bin) ->
     case inet:parse_address(binary_to_list(Bin)) of
         {ok, Ip} ->
