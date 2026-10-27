@@ -11,7 +11,7 @@
 ///
 /// - `status`  — HTTP status code (integer, e.g. 200, 404, 500)
 /// - `headers` — Response headers as a List of [name, value] binary pairs
-/// - `body`    — Response body as a String
+/// - `body`    — Response body: a String when valid UTF-8, otherwise a Binary
 ///
 /// ## Examples
 /// ```beamtalk
@@ -26,9 +26,9 @@ sealed Value subclass: HTTPResponse
   /// HTTP status code (e.g. 200, 404, 500).
   field: status :: Integer = 0
   /// Response headers as a List of [name, value] binary pairs.
-  field: headers :: List(List(String)) = #()
-  /// Response body as a String.
-  field: body :: String = ""
+  field: headers :: List(List(String | Binary)) = #()
+  /// Response body: a String when the bytes are valid UTF-8, otherwise a Binary.
+  field: body :: String | Binary = ""
 
   /// True if the status code is in the 2xx success range.
   ///
@@ -42,13 +42,21 @@ sealed Value subclass: HTTPResponse
   /// Parse the response body as JSON.
   ///
   /// Returns `Result ok:` with the parsed value (typically a Dictionary),
-  /// or `Result error:` if the body is not valid JSON.
+  /// or `Result error:` if the body is not valid JSON or is a non-UTF-8
+  /// Binary.
   ///
   /// ## Examples
   /// ```beamtalk
   /// json := resp bodyAsJson unwrap   // => a Dictionary or List
   /// ```
-  sealed bodyAsJson -> Result(JsonValue, Error) => Json parse: self body
+  sealed bodyAsJson -> Result(JsonValue, Error) =>
+    (self.body isKindOf: String) ifTrue: [
+      Json parse: self.body
+    ] ifFalse: [
+      [
+        Error signal: "body is not UTF-8 text"
+      ] on: Error do: [:e | Result error: e]
+    ]
 
   /// Human-readable representation: "an HTTPResponse(200)".
   ///

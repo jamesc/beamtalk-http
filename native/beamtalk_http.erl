@@ -116,7 +116,8 @@ dispatch('request:url:options:', [Method, Url, Options], _Self) ->
 dispatch('class', _Args, _Self) ->
     'Http';
 dispatch('printString', _Args, _Self) ->
-    <<"Http">>;
+    %% BT-4173: printString answers a String.
+    beamtalk_primitive:string_from_binary(<<"Http">>);
 dispatch(Selector, Args, Self) ->
     case beamtalk_object_ops:has_method(Selector) of
         true ->
@@ -153,7 +154,7 @@ has_method(Selector) -> beamtalk_object_ops:has_method(Selector).
 %%% ============================================================================
 
 -doc "Perform a GET request with no extra headers.".
--spec 'get:'(binary()) -> {ok, beamtalk_http_response:t()} | {error, term()}.
+-spec 'get:'(binary() | beamtalk_string:t()) -> {ok, beamtalk_http_response:t()} | {error, term()}.
 'get:'(Url) -> 'get:headers:'(Url, []).
 
 -doc """
@@ -163,7 +164,11 @@ Perform a GET request.
 Returns `Result ok: httpResponse` on success, `Result error:` on network failure.
 HTTP status codes (e.g. 404) are not errors — they are on the HTTPResponse.
 """.
--spec 'get:headers:'(binary(), list()) -> {ok, beamtalk_http_response:t()} | {error, term()}.
+-spec 'get:headers:'(binary() | beamtalk_string:t(), list()) ->
+    {ok, beamtalk_http_response:t()} | {error, term()}.
+'get:headers:'({beamtalk_string, Url}, Headers) when is_binary(Url) ->
+    %% BT-4173: a String Url arrives tagged — unwrap for gun.
+    'get:headers:'(Url, Headers);
 'get:headers:'(Url, Headers) when is_binary(Url), is_list(Headers) ->
     do_request(<<"GET">>, Url, Headers, <<>>, ?DEFAULT_TIMEOUT, 'get:headers:');
 'get:headers:'(_, Headers) when not is_list(Headers) ->
@@ -172,12 +177,21 @@ HTTP status codes (e.g. 404) are not errors — they are on the HTTPResponse.
     type_error('get:headers:', <<"Url must be a String">>).
 
 -doc "Perform a POST request with body and no extra headers.".
--spec 'post:body:'(binary(), binary()) -> {ok, beamtalk_http_response:t()} | {error, term()}.
+-spec 'post:body:'(binary() | beamtalk_string:t(), binary() | beamtalk_string:t()) ->
+    {ok, beamtalk_http_response:t()} | {error, term()}.
 'post:body:'(Url, Body) -> 'post:headers:body:'(Url, [], Body).
 
 -doc "Perform a POST request with headers and body.".
--spec 'post:headers:body:'(binary(), list(), binary()) ->
-    {ok, beamtalk_http_response:t()} | {error, term()}.
+-spec 'post:headers:body:'(
+    binary() | beamtalk_string:t(), list(), binary() | beamtalk_string:t()
+) -> {ok, beamtalk_http_response:t()} | {error, term()}.
+'post:headers:body:'({beamtalk_string, Url}, Headers, Body) when is_binary(Url) ->
+    %% BT-4173: a String Url/body arrives tagged — unwrap for gun.
+    'post:headers:body:'(Url, Headers, Body);
+'post:headers:body:'(Url, Headers, {beamtalk_string, Body}) when
+    is_binary(Url), is_list(Headers), is_binary(Body)
+->
+    'post:headers:body:'(Url, Headers, Body);
 'post:headers:body:'(Url, Headers, Body) when is_binary(Url), is_list(Headers), is_binary(Body) ->
     do_request(<<"POST">>, Url, Headers, Body, ?DEFAULT_TIMEOUT, 'post:headers:body:');
 'post:headers:body:'(Url, _, _) when not is_binary(Url) ->
@@ -188,12 +202,21 @@ HTTP status codes (e.g. 404) are not errors — they are on the HTTPResponse.
     type_error('post:headers:body:', <<"Body must be a String">>).
 
 -doc "Perform a PUT request with body and no extra headers.".
--spec 'put:body:'(binary(), binary()) -> {ok, beamtalk_http_response:t()} | {error, term()}.
+-spec 'put:body:'(binary() | beamtalk_string:t(), binary() | beamtalk_string:t()) ->
+    {ok, beamtalk_http_response:t()} | {error, term()}.
 'put:body:'(Url, Body) -> 'put:headers:body:'(Url, [], Body).
 
 -doc "Perform a PUT request with headers and body.".
--spec 'put:headers:body:'(binary(), list(), binary()) ->
-    {ok, beamtalk_http_response:t()} | {error, term()}.
+-spec 'put:headers:body:'(
+    binary() | beamtalk_string:t(), list(), binary() | beamtalk_string:t()
+) -> {ok, beamtalk_http_response:t()} | {error, term()}.
+'put:headers:body:'({beamtalk_string, Url}, Headers, Body) when is_binary(Url) ->
+    %% BT-4173: a String Url/body arrives tagged — unwrap for gun.
+    'put:headers:body:'(Url, Headers, Body);
+'put:headers:body:'(Url, Headers, {beamtalk_string, Body}) when
+    is_binary(Url), is_list(Headers), is_binary(Body)
+->
+    'put:headers:body:'(Url, Headers, Body);
 'put:headers:body:'(Url, Headers, Body) when is_binary(Url), is_list(Headers), is_binary(Body) ->
     do_request(<<"PUT">>, Url, Headers, Body, ?DEFAULT_TIMEOUT, 'put:headers:body:');
 'put:headers:body:'(Url, _, _) when not is_binary(Url) ->
@@ -204,11 +227,16 @@ HTTP status codes (e.g. 404) are not errors — they are on the HTTPResponse.
     type_error('put:headers:body:', <<"Body must be a String">>).
 
 -doc "Perform a DELETE request with no extra headers.".
--spec 'delete:'(binary()) -> {ok, beamtalk_http_response:t()} | {error, term()}.
+-spec 'delete:'(binary() | beamtalk_string:t()) ->
+    {ok, beamtalk_http_response:t()} | {error, term()}.
 'delete:'(Url) -> 'delete:headers:'(Url, []).
 
 -doc "Perform a DELETE request.".
--spec 'delete:headers:'(binary(), list()) -> {ok, beamtalk_http_response:t()} | {error, term()}.
+-spec 'delete:headers:'(binary() | beamtalk_string:t(), list()) ->
+    {ok, beamtalk_http_response:t()} | {error, term()}.
+'delete:headers:'({beamtalk_string, Url}, Headers) when is_binary(Url) ->
+    %% BT-4173: a String Url arrives tagged — unwrap for gun.
+    'delete:headers:'(Url, Headers);
 'delete:headers:'(Url, Headers) when is_binary(Url), is_list(Headers) ->
     do_request(<<"DELETE">>, Url, Headers, <<>>, ?DEFAULT_TIMEOUT, 'delete:headers:');
 'delete:headers:'(_, Headers) when not is_list(Headers) ->
@@ -222,15 +250,26 @@ Perform a generic HTTP request.
 `Method` is a binary like `<<"GET">>` or a symbol like `#get`.
 `Options` is a map with optional keys: `headers`, `body`, `timeout`.
 """.
--spec 'request:url:options:'(term(), binary(), map()) ->
+-spec 'request:url:options:'(term(), binary() | beamtalk_string:t(), map()) ->
     {ok, beamtalk_http_response:t()} | {error, term()}.
+'request:url:options:'(Method, {beamtalk_string, Url}, Options) when is_binary(Url) ->
+    %% BT-4173: a String Url arrives tagged — unwrap for gun.
+    'request:url:options:'(Method, Url, Options);
 'request:url:options:'(Method, Url, Options) when is_binary(Url), is_map(Options) ->
     MethodBin = normalise_method(Method),
     Headers = maps:get(headers, Options, []),
     Body = maps:get(body, Options, <<>>),
     Timeout = maps:get(timeout, Options, ?DEFAULT_TIMEOUT),
     validate_request_options(Headers, Body, Timeout),
-    do_request(MethodBin, Url, Headers, Body, Timeout, 'request:url:options:');
+    %% BT-4173: a String body arrives tagged — unwrap for gun.
+    do_request(
+        MethodBin,
+        Url,
+        Headers,
+        beamtalk_http_text:unwrap_string(Body),
+        Timeout,
+        'request:url:options:'
+    );
 'request:url:options:'(_, Url, _) when not is_binary(Url) ->
     type_error('request:url:options:', <<"Url must be a String">>);
 'request:url:options:'(_, _, Options) when not is_map(Options) ->
@@ -241,26 +280,29 @@ Perform a generic HTTP request.
 %%% ============================================================================
 
 -doc "GET delegate called by `(Erlang beamtalk_http) get: url` from Beamtalk.".
--spec get(binary()) -> {ok, beamtalk_http_response:t()} | {error, term()}.
+-spec get(binary() | beamtalk_string:t()) -> {ok, beamtalk_http_response:t()} | {error, term()}.
 get(Url) -> 'get:'(Url).
 
 -doc "POST delegate called by `(Erlang beamtalk_http) post: url body: body`.".
--spec post(binary(), binary()) -> {ok, beamtalk_http_response:t()} | {error, term()}.
+-spec post(binary() | beamtalk_string:t(), binary() | beamtalk_string:t()) ->
+    {ok, beamtalk_http_response:t()} | {error, term()}.
 post(Url, Body) -> 'post:body:'(Url, Body).
 
 -doc "PUT delegate called by `(Erlang beamtalk_http) put: url body: body`.".
--spec put(binary(), binary()) -> {ok, beamtalk_http_response:t()} | {error, term()}.
+-spec put(binary() | beamtalk_string:t(), binary() | beamtalk_string:t()) ->
+    {ok, beamtalk_http_response:t()} | {error, term()}.
 put(Url, Body) -> 'put:body:'(Url, Body).
 
 -doc "DELETE delegate called by `(Erlang beamtalk_http) delete: url`.".
--spec delete(binary()) -> {ok, beamtalk_http_response:t()} | {error, term()}.
+-spec delete(binary() | beamtalk_string:t()) -> {ok, beamtalk_http_response:t()} | {error, term()}.
 delete(Url) -> 'delete:'(Url).
 
 -doc """
 Generic request delegate called by
 `(Erlang beamtalk_http) request: method url: url options: opts`.
 """.
--spec request(term(), binary(), map()) -> {ok, beamtalk_http_response:t()} | {error, term()}.
+-spec request(term(), binary() | beamtalk_string:t(), map()) ->
+    {ok, beamtalk_http_response:t()} | {error, term()}.
 request(Method, Url, Options) -> 'request:url:options:'(Method, Url, Options).
 
 %%% ============================================================================
@@ -283,7 +325,10 @@ do_request(Method, Url, BtHeaders, Body, Timeout, Selector) ->
         {error, invalid_url} ->
             http_error(Selector, #{url => Url}, <<"Invalid URL">>);
         {ok, #{host := Host, port := Port, path := Path, transport := Transport}} ->
-            GunHeaders = to_gun_headers(BtHeaders, Selector),
+            %% BT-4173: header names/values arrive tagged — unwrap for gun.
+            GunHeaders = to_gun_headers(
+                [norm_header_pair(P) || P <- BtHeaders], Selector
+            ),
             GunOpts = build_gun_opts(Transport, Host),
             Deadline = deadline(Timeout),
             case gun:open(Host, Port, GunOpts) of
@@ -403,8 +448,9 @@ collect_response(ConnPid, StreamRef, MRef, Deadline, Selector) ->
 
 make_response(Status, GunHeaders, Body) ->
     BtHeaders = from_gun_headers(GunHeaders),
+    %% BT-4173: a text body answers a String; non-text bytes stay Binary.
     ?BT_CLASS_MODULE_HTTPResponse:'class_status:headers:body:'(
-        undefined, Status, BtHeaders, Body
+        undefined, Status, BtHeaders, beamtalk_http_text:maybe_tag(Body)
     ).
 
 -doc """
@@ -507,16 +553,37 @@ to_gun_headers([Bad | _Rest], Selector) ->
 Convert gun headers to Beamtalk list-of-lists format.
 
 Gun headers: list of `{Name, Value}` tuples.
-Beamtalk headers: list of `[Name, Value]` pairs.
+Beamtalk headers: list of `[Name, Value]` pairs, tagged as Strings
+when the bytes are valid UTF-8 (BT-4173).
 """.
 -spec from_gun_headers(list()) -> list().
 from_gun_headers(Headers) ->
-    [[Name, Value] || {Name, Value} <- Headers].
+    [
+        [beamtalk_http_text:maybe_tag(Name), beamtalk_http_text:maybe_tag(Value)]
+     || {Name, Value} <- Headers
+    ].
+
+-doc """
+Unwrap one header pair's tagged Strings to bytes for gun (BT-4173).
+
+Non-pair entries pass through untouched so `to_gun_headers/2` still
+raises its shape error for them.
+""".
+-spec norm_header_pair(term()) -> term().
+norm_header_pair([Name, Value]) ->
+    [beamtalk_http_text:unwrap_string(Name), beamtalk_http_text:unwrap_string(Value)];
+norm_header_pair({Name, Value}) ->
+    {beamtalk_http_text:unwrap_string(Name), beamtalk_http_text:unwrap_string(Value)};
+norm_header_pair(Other) ->
+    Other.
 
 -doc "Validate request options, raising type_error on bad values.".
--spec validate_request_options(list(), binary(), non_neg_integer()) -> ok.
+-spec validate_request_options(list(), binary() | beamtalk_string:t(), non_neg_integer()) -> ok.
 validate_request_options(Headers, _Body, _Timeout) when not is_list(Headers) ->
     type_error('request:url:options:', <<"Options.headers must be a List">>);
+validate_request_options(Headers, {beamtalk_string, Body}, Timeout) when is_binary(Body) ->
+    %% BT-4173: a String body arrives tagged — validate the bytes.
+    validate_request_options(Headers, Body, Timeout);
 validate_request_options(_Headers, Body, _Timeout) when not is_binary(Body) ->
     type_error('request:url:options:', <<"Options.body must be a String">>);
 validate_request_options(_Headers, _Body, Timeout) when
@@ -532,11 +599,14 @@ validate_request_options(_Headers, _Body, _Timeout) ->
 -doc """
 Normalise a method value to an uppercase binary.
 
-Accepts binary `<<"get">>` or atom `get`/`'GET'`.
+Accepts binary `<<"get">>`, tagged String, or atom `get`/`'GET'`.
 Raises type_error for any other value.
 `string:uppercase/1` returns `chardata()`, so we convert to binary explicitly.
 """.
 -spec normalise_method(term()) -> binary().
+normalise_method({beamtalk_string, Method}) when is_binary(Method) ->
+    %% BT-4173: a String method arrives tagged — unwrap first.
+    normalise_method(Method);
 normalise_method(Method) when is_binary(Method) ->
     unicode:characters_to_binary(string:uppercase(Method));
 normalise_method(Method) when is_atom(Method) ->

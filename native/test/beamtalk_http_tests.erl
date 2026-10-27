@@ -65,7 +65,10 @@ dispatch_class_test() ->
 
 dispatch_printString_test() ->
     Self = #{'$beamtalk_class' => 'Http'},
-    ?assertEqual(<<"Http">>, beamtalk_http:dispatch('printString', [], Self)).
+    ?assertEqual(
+        {beamtalk_string, <<"Http">>},
+        beamtalk_http:dispatch('printString', [], Self)
+    ).
 
 dispatch_does_not_understand_test() ->
     Self = #{'$beamtalk_class' => 'Http'},
@@ -318,7 +321,13 @@ from_gun_headers_empty_test() ->
 
 from_gun_headers_converts_tuples_test() ->
     Input = [{<<"content-type">>, <<"text/html">>}, {<<"x-custom">>, <<"val">>}],
-    Expected = [[<<"content-type">>, <<"text/html">>], [<<"x-custom">>, <<"val">>]],
+    Expected = [
+        [
+            {beamtalk_string, <<"content-type">>},
+            {beamtalk_string, <<"text/html">>}
+        ],
+        [{beamtalk_string, <<"x-custom">>}, {beamtalk_string, <<"val">>}]
+    ],
     ?assertEqual(Expected, beamtalk_http:from_gun_headers(Input)).
 
 %%% ============================================================================

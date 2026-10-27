@@ -58,7 +58,9 @@ dispatch_and_reply(Handler, HttpRequest, Req1, State) ->
         Response when is_map(Response) ->
             Status = get_response_field(Response, status, 200),
             Headers = get_response_headers(Response),
-            Body = get_response_field(Response, body, <<>>),
+            %% BT-4173: the handler's String body arrives tagged —
+            %% cowboy needs bytes (a Binary body passes through).
+            Body = beamtalk_http_text:unwrap_string(get_response_field(Response, body, <<>>)),
             Req = cowboy_req:reply(Status, Headers, Body, Req1),
             {ok, Req, State};
         Other ->
@@ -112,13 +114,33 @@ build_request(Req0) ->
     QsMap = parse_query_params(Req1),
     case validate_text_fields(Method, Path, Headers, QsMap) of
         ok ->
+            %% BT-4173: validated text answers Strings; the body is
+            %% only text when its bytes are valid UTF-8 (uploads stay
+            %% Binary). Route params are tagged by the router on match.
             HttpRequest = ?BT_CLASS_MODULE_HTTPRequest:'class_method:path:headers:body:queryParams:params:'(
-                undefined, Method, Path, Headers, Body, QsMap, #{}
+                undefined,
+                tag_validated(Method),
+                tag_validated(Path),
+                [[tag_validated(N), tag_validated(V)] || [N, V] <- Headers],
+                beamtalk_http_text:maybe_tag(Body),
+                maps:from_list([
+                    {tag_validated(K), tag_validated(V)}
+                 || {K, V} <- maps:to_list(QsMap)
+                ]),
+                #{}
             ),
             {ok, HttpRequest, Req1};
         {error, Field} ->
             {error, Field, Req1}
     end.
+
+%% @private Tag validated-UTF-8 bytes as a String (BT-4173).
+%%
+%% Call ONLY with bytes that passed `validate_text_fields/4` — tagging
+%% is trusted and does not re-check.
+-spec tag_validated(binary()) -> beamtalk_string:t().
+tag_validated(Bin) when is_binary(Bin) ->
+    beamtalk_primitive:string_from_binary(Bin).
 
 %% @private Validate the request's text fields as UTF-8 (BT-4171).
 %%
@@ -130,10 +152,11 @@ build_request(Req0) ->
 %% rejected with 400 instead of flowing through as Binary.
 %%
 %% The body is intentionally NOT validated: unlike the other fields it
-%% legitimately carries bytes (file uploads and other non-text payloads),
-%% and a valid UTF-8 body already answers `String`. Route params need no
-%% check either: they are `/`-separated substrings of the validated path,
-%% so they are valid UTF-8 iff the path is.
+%% legitimately carries bytes (file uploads and other non-text payloads).
+%% `build_request/1` tags it as `String` only when its bytes are valid
+%% UTF-8 — otherwise it stays `Binary`. Route params need no check
+%% either: they are `/`-separated substrings of the validated path, so
+%% they are valid UTF-8 iff the path is.
 -spec validate_text_fields(binary(), binary(), [[binary()]], map()) ->
     ok | {error, atom()}.
 validate_text_fields(Method, Path, Headers, QsMap) ->
@@ -271,7 +294,11 @@ get_response_field(Response, Field, Default) ->
 get_response_headers(Response) ->
     case maps:get(headers, Response, []) of
         Headers when is_list(Headers) ->
-            maps:from_list([{Name, Value} || [Name, Value] <- Headers]);
+            %% BT-4173: names/values arrive tagged — cowboy needs bytes.
+            maps:from_list([
+                {beamtalk_http_text:unwrap_string(Name), beamtalk_http_text:unwrap_string(Value)}
+             || [Name, Value] <- Headers
+            ]);
         _ ->
             #{}
     end.

@@ -29,10 +29,13 @@ Fields mirror the `field:` declarations in `src/httpresponse.bt`:
   field: status  :: Integer = 0
   field: headers :: List    = #()
   field: body    :: String  = ""
+
+BT-4173: headers/body answer Strings when the wire bytes are valid
+UTF-8, and stay bare Binaries otherwise (non-text payloads).
 """.
 -type t() :: #{
     '$beamtalk_class' := 'HTTPResponse',
     'status' := integer(),
-    'headers' := [[binary()]],
-    'body' := binary()
+    'headers' := [[binary() | beamtalk_string:t()]],
+    'body' := binary() | beamtalk_string:t()
 }.

@@ -40,7 +40,7 @@ print_string_selector_test() ->
     Handler = fun(_Req) -> make_simple_response(200, <<"ok">>) end,
     {ok, Pid} = beamtalk_http_server:start_link(#{port => 0, handler => Handler}),
     Str = gen_server:call(Pid, {printString, []}),
-    ?assertMatch(<<"an HTTPServer(port: ", _/binary>>, Str),
+    ?assertMatch({beamtalk_string, <<"an HTTPServer(port: ", _/binary>>}, Str),
     gen_server:stop(Pid).
 
 stop_cleans_up_listener_test() ->
@@ -97,7 +97,7 @@ handler_receives_request_and_returns_response_test() ->
     #{'$beamtalk_class' := 'Result', 'isOk' := true, 'okValue' := Resp} =
         beamtalk_http:'get:'(Url),
     ?assertEqual(200, maps:get(status, Resp)),
-    ?assertEqual(<<"hello from handler">>, maps:get(body, Resp)),
+    ?assertEqual({beamtalk_string, <<"hello from handler">>}, maps:get(body, Resp)),
     gen_server:stop(Pid).
 
 %%% ============================================================================
@@ -126,13 +126,13 @@ request_text_fields_answer_string_test() ->
         after 5000 ->
             error(request_not_captured)
         end,
-    ?assertEqual(<<"GET">>, maps:get(method, Req)),
+    ?assertEqual({beamtalk_string, <<"GET">>}, maps:get(method, Req)),
     ?assertEqual('String', beamtalk_primitive:class_of(maps:get(method, Req))),
-    ?assertEqual(<<"/hello">>, maps:get(path, Req)),
+    ?assertEqual({beamtalk_string, <<"/hello">>}, maps:get(path, Req)),
     ?assertEqual('String', beamtalk_primitive:class_of(maps:get(path, Req))),
     ?assertEqual('String', beamtalk_primitive:class_of(maps:get(body, Req))),
     Qs = maps:get(queryParams, Req),
-    ?assertEqual(<<"Ada">>, maps:get(<<"name">>, Qs)),
+    ?assertEqual({beamtalk_string, <<"Ada">>}, maps:get({beamtalk_string, <<"name">>}, Qs)),
     lists:foreach(
         fun(K) -> ?assertEqual('String', beamtalk_primitive:class_of(K)) end,
         maps:keys(Qs)
@@ -172,7 +172,7 @@ request_body_echoes_text_test() ->
         after 5000 ->
             error(request_not_captured)
         end,
-    ?assertEqual(<<"test data">>, maps:get(body, Req)),
+    ?assertEqual({beamtalk_string, <<"test data">>}, maps:get(body, Req)),
     ?assertEqual('String', beamtalk_primitive:class_of(maps:get(body, Req))),
     gen_server:stop(Pid).
 
@@ -199,7 +199,7 @@ route_params_answer_string_test() ->
             error(request_not_captured)
         end,
     Params = maps:get(params, Req),
-    ?assertEqual(<<"42">>, maps:get(<<"id">>, Params)),
+    ?assertEqual({beamtalk_string, <<"42">>}, maps:get({beamtalk_string, <<"id">>}, Params)),
     lists:foreach(
         fun(K) -> ?assertEqual('String', beamtalk_primitive:class_of(K)) end,
         maps:keys(Params)
@@ -227,7 +227,8 @@ invalid_utf8_query_value_answers_400_test() ->
     ?assertEqual(400, maps:get(status, Resp)),
     %% The body proves the 400 comes from boundary validation, not cowboy.
     ?assertEqual(
-        <<"Bad Request: invalid UTF-8 in query_value">>, maps:get(body, Resp)
+        {beamtalk_string, <<"Bad Request: invalid UTF-8 in query_value">>},
+        maps:get(body, Resp)
     ),
     %% The handler never runs for a request rejected at the boundary.
     receive

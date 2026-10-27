@@ -92,6 +92,14 @@ TestCase subclass: HTTPTest
     resp := (HTTPClient get: self.baseUrl ++ "/status/204") unwrap
     self deny: resp bodyAsJson isOk
 
+  testResponseBodyAsJsonReturnsErrorForNonUtf8Body =>
+    // BT-4173: a non-UTF-8 body stays a Binary; bodyAsJson answers an error Result
+    resp := HTTPResponse new: #{
+      #status => 200,
+      #body => (Binary fromBytes: #(255, 254, 253))
+    }
+    self deny: resp bodyAsJson isOk
+
   // ===== HTTPClient class-side — get: =====
   testClassGetReturns200 =>
     resp := (HTTPClient get: self.baseUrl ++ "/get") unwrap
