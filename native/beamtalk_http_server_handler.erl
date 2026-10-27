@@ -124,7 +124,7 @@ build_request(Req0) ->
                 [[tag_validated(N), tag_validated(V)] || [N, V] <- Headers],
                 beamtalk_http_text:maybe_tag(Body),
                 maps:from_list([
-                    {tag_validated(K), beamtalk_http_text:maybe_tag(V)}
+                    {tag_validated(K), tag_validated(V)}
                  || {K, V} <- maps:to_list(QsMap)
                 ]),
                 #{}

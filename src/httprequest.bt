@@ -32,7 +32,7 @@ sealed Value subclass: HTTPRequest
   /// Request path (e.g. "/api/users").
   field: path :: String = "/"
   /// Request headers as a List of [name, value] binary pairs.
-  field: headers :: List(List(String | Binary)) = #()
+  field: headers :: List(List(String)) = #()
   /// Request body: a String when the bytes are valid UTF-8, otherwise a Binary.
   field: body :: String | Binary = ""
   /// Query parameters as a Dictionary.
