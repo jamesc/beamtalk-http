@@ -60,7 +60,7 @@ dispatch_and_reply(Handler, HttpRequest, Req1, State) ->
             Headers = get_response_headers(Response),
             %% BT-4173: the handler's String body arrives tagged —
             %% cowboy needs bytes (a Binary body passes through).
-            Body = unwrap_string(get_response_field(Response, body, <<>>)),
+            Body = beamtalk_http_text:unwrap_string(get_response_field(Response, body, <<>>)),
             Req = cowboy_req:reply(Status, Headers, Body, Req1),
             {ok, Req, State};
         Other ->
@@ -122,8 +122,11 @@ build_request(Req0) ->
                 tag_validated(Method),
                 tag_validated(Path),
                 [[tag_validated(N), tag_validated(V)] || [N, V] <- Headers],
-                maybe_tag(Body),
-                maps:from_list([{tag_validated(K), maybe_tag(V)} || {K, V} <- maps:to_list(QsMap)]),
+                beamtalk_http_text:maybe_tag(Body),
+                maps:from_list([
+                    {tag_validated(K), beamtalk_http_text:maybe_tag(V)}
+                 || {K, V} <- maps:to_list(QsMap)
+                ]),
                 #{}
             ),
             {ok, HttpRequest, Req1};
@@ -138,16 +141,6 @@ build_request(Req0) ->
 -spec tag_validated(binary()) -> beamtalk_string:t().
 tag_validated(Bin) when is_binary(Bin) ->
     beamtalk_primitive:string_from_binary(Bin).
-
-%% @private Tag bytes as a String when valid UTF-8, else leave as Binary.
--spec maybe_tag(term()) -> term().
-maybe_tag(Bin) when is_binary(Bin) ->
-    case beamtalk_primitive:is_utf8(Bin) of
-        true -> beamtalk_primitive:string_from_binary(Bin);
-        false -> Bin
-    end;
-maybe_tag(Other) ->
-    Other.
 
 %% @private Validate the request's text fields as UTF-8 (BT-4171).
 %%
@@ -303,14 +296,9 @@ get_response_headers(Response) ->
         Headers when is_list(Headers) ->
             %% BT-4173: names/values arrive tagged — cowboy needs bytes.
             maps:from_list([
-                {unwrap_string(Name), unwrap_string(Value)}
+                {beamtalk_http_text:unwrap_string(Name), beamtalk_http_text:unwrap_string(Value)}
              || [Name, Value] <- Headers
             ]);
         _ ->
             #{}
     end.
-
-%% @private Unwrap a tagged String to bytes; anything else passes through.
--spec unwrap_string(term()) -> term().
-unwrap_string({beamtalk_string, Bin}) when is_binary(Bin) -> Bin;
-unwrap_string(Other) -> Other.

@@ -262,7 +262,14 @@ Perform a generic HTTP request.
     Timeout = maps:get(timeout, Options, ?DEFAULT_TIMEOUT),
     validate_request_options(Headers, Body, Timeout),
     %% BT-4173: a String body arrives tagged — unwrap for gun.
-    do_request(MethodBin, Url, Headers, unwrap_string(Body), Timeout, 'request:url:options:');
+    do_request(
+        MethodBin,
+        Url,
+        Headers,
+        beamtalk_http_text:unwrap_string(Body),
+        Timeout,
+        'request:url:options:'
+    );
 'request:url:options:'(_, Url, _) when not is_binary(Url) ->
     type_error('request:url:options:', <<"Url must be a String">>);
 'request:url:options:'(_, _, Options) when not is_map(Options) ->
@@ -443,7 +450,7 @@ make_response(Status, GunHeaders, Body) ->
     BtHeaders = from_gun_headers(GunHeaders),
     %% BT-4173: a text body answers a String; non-text bytes stay Binary.
     ?BT_CLASS_MODULE_HTTPResponse:'class_status:headers:body:'(
-        undefined, Status, BtHeaders, maybe_tag(Body)
+        undefined, Status, BtHeaders, beamtalk_http_text:maybe_tag(Body)
     ).
 
 -doc """
@@ -551,7 +558,10 @@ when the bytes are valid UTF-8 (BT-4173).
 """.
 -spec from_gun_headers(list()) -> list().
 from_gun_headers(Headers) ->
-    [[maybe_tag(Name), maybe_tag(Value)] || {Name, Value} <- Headers].
+    [
+        [beamtalk_http_text:maybe_tag(Name), beamtalk_http_text:maybe_tag(Value)]
+     || {Name, Value} <- Headers
+    ].
 
 -doc """
 Unwrap one header pair's tagged Strings to bytes for gun (BT-4173).
@@ -560,28 +570,11 @@ Non-pair entries pass through untouched so `to_gun_headers/2` still
 raises its shape error for them.
 """.
 -spec norm_header_pair(term()) -> term().
-norm_header_pair([Name, Value]) -> [unwrap_string(Name), unwrap_string(Value)];
-norm_header_pair({Name, Value}) -> {unwrap_string(Name), unwrap_string(Value)};
-norm_header_pair(Other) -> Other.
-
--doc "Unwrap a tagged String to bytes; anything else passes through (BT-4173).".
--spec unwrap_string(term()) -> term().
-unwrap_string({beamtalk_string, Bin}) when is_binary(Bin) -> Bin;
-unwrap_string(Other) -> Other.
-
--doc """
-Tag wire bytes as a String when they are valid UTF-8 (BT-4173).
-
-Non-text bytes (e.g. a binary response body) stay a bare Binary —
-tagging them would lie about the value's class.
-""".
--spec maybe_tag(term()) -> term().
-maybe_tag(Bin) when is_binary(Bin) ->
-    case beamtalk_primitive:is_utf8(Bin) of
-        true -> beamtalk_primitive:string_from_binary(Bin);
-        false -> Bin
-    end;
-maybe_tag(Other) ->
+norm_header_pair([Name, Value]) ->
+    [beamtalk_http_text:unwrap_string(Name), beamtalk_http_text:unwrap_string(Value)];
+norm_header_pair({Name, Value}) ->
+    {beamtalk_http_text:unwrap_string(Name), beamtalk_http_text:unwrap_string(Value)};
+norm_header_pair(Other) ->
     Other.
 
 -doc "Validate request options, raising type_error on bad values.".

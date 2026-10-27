@@ -72,8 +72,8 @@ Returns:
 match(Routes, Method, Path) ->
     %% BT-4173: method/path arrive tagged from Beamtalk — matching is
     %% byte-level, so unwrap; captured params are re-tagged (see below).
-    Segments = split_path(unwrap_string(Path)),
-    match_routes(Routes, unwrap_string(Method), Segments, false).
+    Segments = split_path(beamtalk_http_text:unwrap_string(Path)),
+    match_routes(Routes, beamtalk_http_text:unwrap_string(Method), Segments, false).
 
 %%% ============================================================================
 %%% Internal — compilation
@@ -82,9 +82,13 @@ match(Routes, Method, Path) ->
 -spec compile_route({path_param(), path_param(), fun()} | [path_param() | fun()]) ->
     compiled_route().
 compile_route({Method, Path, Handler}) when is_function(Handler) ->
-    compile_route_unwrapped(unwrap_string(Method), unwrap_string(Path), Handler);
+    compile_route_unwrapped(
+        beamtalk_http_text:unwrap_string(Method), beamtalk_http_text:unwrap_string(Path), Handler
+    );
 compile_route([Method, Path, Handler]) when is_function(Handler) ->
-    compile_route_unwrapped(unwrap_string(Method), unwrap_string(Path), Handler);
+    compile_route_unwrapped(
+        beamtalk_http_text:unwrap_string(Method), beamtalk_http_text:unwrap_string(Path), Handler
+    );
 compile_route(_) ->
     type_error('compile:', <<"Each route must be [Method, Path, Handler]">>).
 
@@ -203,9 +207,11 @@ match_segments([{wildcard, Name} | _], Segments, Params) ->
     Value = join_segments(Segments),
     %% BT-4173: params answer Strings (`req param: "id"` looks up a
     %% String key); non-text bytes stay Binary.
-    {ok, Params#{maybe_tag(Name) => maybe_tag(Value)}};
+    {ok, Params#{beamtalk_http_text:maybe_tag(Name) => beamtalk_http_text:maybe_tag(Value)}};
 match_segments([{param, Name} | PatternRest], [Seg | SegsRest], Params) ->
-    match_segments(PatternRest, SegsRest, Params#{maybe_tag(Name) => maybe_tag(Seg)});
+    match_segments(PatternRest, SegsRest, Params#{
+        beamtalk_http_text:maybe_tag(Name) => beamtalk_http_text:maybe_tag(Seg)
+    });
 match_segments([Literal | PatternRest], [Seg | SegsRest], Params) when is_binary(Literal) ->
     case Literal =:= Seg of
         true -> match_segments(PatternRest, SegsRest, Params);
@@ -233,18 +239,3 @@ type_error(Selector, Hint) ->
     Error1 = beamtalk_error:with_selector(Error0, Selector),
     Error2 = beamtalk_error:with_hint(Error1, Hint),
     beamtalk_error:raise(Error2).
-
-%% @private Unwrap a tagged String to bytes; anything else passes through.
--spec unwrap_string(term()) -> term().
-unwrap_string({beamtalk_string, Bin}) when is_binary(Bin) -> Bin;
-unwrap_string(Other) -> Other.
-
-%% @private Tag bytes as a String when valid UTF-8, else leave as Binary.
--spec maybe_tag(term()) -> term().
-maybe_tag(Bin) when is_binary(Bin) ->
-    case beamtalk_primitive:is_utf8(Bin) of
-        true -> beamtalk_primitive:string_from_binary(Bin);
-        false -> Bin
-    end;
-maybe_tag(Other) ->
-    Other.

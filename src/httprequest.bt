@@ -12,7 +12,7 @@
 /// - `method`      — HTTP method as a String (e.g. "GET", "POST")
 /// - `path`        — Request path as a String (e.g. "/api/users")
 /// - `headers`     — Request headers as a List of [name, value] binary pairs
-/// - `body`        — Request body as a String (empty for GET/DELETE)
+/// - `body`        — Request body: a String when valid UTF-8, otherwise a Binary (empty for GET/DELETE)
 /// - `queryParams` — Query parameters as a Dictionary
 ///
 /// ## Examples
@@ -32,9 +32,9 @@ sealed Value subclass: HTTPRequest
   /// Request path (e.g. "/api/users").
   field: path :: String = "/"
   /// Request headers as a List of [name, value] binary pairs.
-  field: headers :: List(List(String)) = #()
-  /// Request body as a String.
-  field: body :: String = ""
+  field: headers :: List(List(String | Binary)) = #()
+  /// Request body: a String when the bytes are valid UTF-8, otherwise a Binary.
+  field: body :: String | Binary = ""
   /// Query parameters as a Dictionary.
   field: queryParams :: Dictionary(String, String) = #{}
   /// Path parameters extracted by HTTPRouter (e.g. `:id` → "42").
