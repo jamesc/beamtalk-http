@@ -79,13 +79,13 @@ TestCase subclass: HTTPTest
   // ===== HTTPResponse — bodyAsJson =====
   testResponseBodyAsJsonReturnsDictionary =>
     resp := (HTTPClient get: self.baseUrl ++ "/json") unwrap
-    json := self assertOk: resp bodyAsJson
-    self assert: (json at: "type") equals: "json"
+    #{"type" => type} := self assertOk: resp bodyAsJson
+    self assert: type equals: "json"
 
   testResponseBodyAsJsonReturnsInteger =>
     resp := (HTTPClient get: self.baseUrl ++ "/json") unwrap
-    json := self assertOk: resp bodyAsJson
-    self assert: (json at: "value") equals: 42
+    #{"value" => value} := self assertOk: resp bodyAsJson
+    self assert: value equals: 42
 
   testResponseBodyAsJsonReturnsErrorForEmptyBody =>
     // /status/204 returns an empty body; bodyAsJson must return an error Result
@@ -107,8 +107,8 @@ TestCase subclass: HTTPTest
 
   testClassGetBodyContainsMethod =>
     resp := (HTTPClient get: self.baseUrl ++ "/get") unwrap
-    json := self assertOk: resp bodyAsJson
-    self assert: (json at: "method") equals: "GET"
+    #{"method" => method} := self assertOk: resp bodyAsJson
+    self assert: method equals: "GET"
 
   // ===== HTTPClient class-side — post:body: =====
   testClassPostBodyReturns200 =>
@@ -117,7 +117,8 @@ TestCase subclass: HTTPTest
 
   testClassPostBodyEchosRequestBody =>
     resp := (HTTPClient post: self.baseUrl ++ "/post" body: "beamtalk") unwrap
-    self assert: ((self assertOk: resp bodyAsJson) at: "body") equals: "beamtalk"
+    #{"body" => body} := self assertOk: resp bodyAsJson
+    self assert: body equals: "beamtalk"
 
   // ===== HTTPClient class-side — put:body: =====
   testClassPutBodyReturns200 =>
@@ -126,7 +127,8 @@ TestCase subclass: HTTPTest
 
   testClassPutBodyEchosRequestBody =>
     resp := (HTTPClient put: self.baseUrl ++ "/put" body: "updated-value") unwrap
-    self assert: ((self assertOk: resp bodyAsJson) at: "body") equals: "updated-value"
+    #{"body" => body} := self assertOk: resp bodyAsJson
+    self assert: body equals: "updated-value"
 
   // ===== HTTPClient class-side — delete: =====
   testClassDeleteReturns200 =>
@@ -135,8 +137,8 @@ TestCase subclass: HTTPTest
 
   testClassDeleteBodyContainsMethod =>
     resp := (HTTPClient delete: self.baseUrl ++ "/delete") unwrap
-    json := self assertOk: resp bodyAsJson
-    self assert: (json at: "method") equals: "DELETE"
+    #{"method" => method} := self assertOk: resp bodyAsJson
+    self assert: method equals: "DELETE"
 
   // ===== HTTPClient class-side — request:url:options: =====
   testClassRequestGetReturns200 =>
@@ -152,7 +154,8 @@ TestCase subclass: HTTPTest
       url: self.baseUrl ++ "/post"
       options: #{#body => "payload"}) unwrap
     self assert: resp status equals: 200
-    self assert: ((self assertOk: resp bodyAsJson) at: "body") equals: "payload"
+    #{"body" => body} := self assertOk: resp bodyAsJson
+    self assert: body equals: "payload"
 
   // ===== HTTPClient instance — get: =====
   testInstanceGetReturns200 =>
@@ -164,8 +167,8 @@ TestCase subclass: HTTPTest
   testInstanceGetBodyContainsMethod =>
     client := HTTPClient spawnWith: #{#baseUrl => self.baseUrl}
     resp := (client get: "/get") unwrap
-    json := self assertOk: resp bodyAsJson
-    self assert: (json at: "method") equals: "GET"
+    #{"method" => method} := self assertOk: resp bodyAsJson
+    self assert: method equals: "GET"
     self assert: client stop equals: #ok
 
   // ===== HTTPClient instance — post:body: =====
@@ -178,7 +181,8 @@ TestCase subclass: HTTPTest
   testInstancePostBodyEchosRequestBody =>
     client := HTTPClient spawnWith: #{#baseUrl => self.baseUrl}
     resp := (client post: "/post" body: "data") unwrap
-    self assert: ((self assertOk: resp bodyAsJson) at: "body") equals: "data"
+    #{"body" => body} := self assertOk: resp bodyAsJson
+    self assert: body equals: "data"
     self assert: client stop equals: #ok
 
   // ===== HTTPClient instance — put:body: =====
@@ -202,8 +206,8 @@ TestCase subclass: HTTPTest
       url: self.baseUrl ++ "/echo-headers"
       options: #{#headers => #(#("x-test-key", "test-value"))}) unwrap
     self assert: resp status equals: 200
-    respBody := self assertOk: resp bodyAsJson
-    self assert: (respBody at: "x-test-key") equals: "test-value"
+    #{"x-test-key" => echoed} := self assertOk: resp bodyAsJson
+    self assert: echoed equals: "test-value"
 
   testInstanceCustomHeaderSentInRequest =>
     client := HTTPClient spawnWith: #{
@@ -212,8 +216,8 @@ TestCase subclass: HTTPTest
     }
     resp := (client get: "/echo-headers") unwrap
     self assert: resp status equals: 200
-    respBody := self assertOk: resp bodyAsJson
-    self assert: (respBody at: "x-client-header") equals: "persistent"
+    #{"x-client-header" => echoed} := self assertOk: resp bodyAsJson
+    self assert: echoed equals: "persistent"
     self assert: client stop equals: #ok
 
   // ===== Json body round-trip =====
@@ -221,8 +225,9 @@ TestCase subclass: HTTPTest
     // Generate a Json body, POST it, verify the server echoed it correctly
     jsonBody := Json generate: #{"message" => "hello"}
     resp := (HTTPClient post: self.baseUrl ++ "/post" body: jsonBody) unwrap
-    echoed := (self assertOk: resp bodyAsJson) at: "body"
-    self assert: ((self assertOk: (Json parse: echoed)) at: "message") equals: "hello"
+    #{"body" => echoed} := self assertOk: resp bodyAsJson
+    #{"message" => message} := self assertOk: (Json parse: echoed)
+    self assert: message equals: "hello"
 
   // ===== Non-2xx status codes =====
   testGet301StatusCode =>
