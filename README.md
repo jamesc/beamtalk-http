@@ -2,7 +2,7 @@
 
 HTTP client and server library for [Beamtalk](https://beamtalk.dev).
 
-Built on [gun](https://github.com/ninenines/gun) (client) and [cowboy](https://github.com/ninenines/cowboy) (server).
+Built on [gun](https://github.com/ninenines/gun) (client) and [cowboy](https://github.com/ninenines/cowboy) (server, the default backend). The server can also run on the pure-Beamtalk [Buccaneer](https://github.com/jamesc/beamtalk-buccaneer) engine — see "Server backends" below.
 
 ## Installation
 
@@ -101,7 +101,8 @@ Plug that needs live, mutable actor state.
 visibility:
 
 - **Block or `HTTPRouter`-compiled route** — invoked directly as a plain
-  function call in cowboy's own request-handling process. Any `self.field`
+  function call in the backend's own request-handling process (cowboy's, or
+  the connection process on Buccaneer). Any `self.field`
   the block closes over is whatever was captured when the block/route
   table was built; it is never re-read, even if the underlying actor's
   state changes later (including `attachX:`-style dependency injection
@@ -115,12 +116,38 @@ Use a block/router/`PlugChain` for stateless request handling; back a route
 with an `HTTPHandler` actor when it needs live or post-startup-configurable
 state.
 
+### Server backends
+
+`HTTPServer` runs on cowboy by default, or on Buccaneer with the `#backend`
+option (or the `BEAMTALK_HTTP_BACKEND` environment variable, which is how
+the test suite runs unchanged on both backends):
+
+```beamtalk
+srv := HTTPServer
+  start: 0
+  handler: handler
+  options: #{ #backend => #buccaneer }
+```
+
+```bash
+BEAMTALK_HTTP_BACKEND=buccaneer beamtalk test
+```
+
+Behavioural differences on the Buccaneer backend (all covered by tests):
+
+- No `server` response header is sent (cowboy sends `server: cowboy`).
+- Duplicate request headers stay separate `#(name, value)` pairs instead
+  of being comma-joined into one value.
+- Request bodies are read eagerly up to `#maxBodyLength` (default 8 MB);
+  a larger body answers 413.
+- A query key without a value (`?flag`) answers `"true"`.
+
 ## Classes
 
 | Class | Description |
 |-------|-------------|
 | `HTTPClient` | Actor-based HTTP client for one-shot and persistent requests |
-| `HTTPServer` | Cowboy-backed HTTP server actor |
+| `HTTPServer` | HTTP server actor (cowboy by default, Buccaneer via `#backend`) |
 | `HTTPRequest` | Incoming HTTP request representation |
 | `HTTPResponse` | HTTP response builder |
 | `HTTPRouter` | URL routing with method-based dispatch |
