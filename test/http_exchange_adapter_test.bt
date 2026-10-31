@@ -1,0 +1,139 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// Adapter edge cases (BT-4082): mapping details the server-side suites do
+/// not hit, pinned on the buccaneer backend over raw sockets —
+/// duplicate request headers, HEAD, chunked request bodies and
+/// `Expect: 100-continue`, plus the `?flag` query rule, the eager body
+/// bound, and the 500 on a raise or a non-`HTTPResponse` answer.
+TestCase subclass: HttpExchangeAdapterTest
+  field: srv = nil
+
+  tearDown => self.srv isNil ifFalse: [self.srv stop]
+
+  connect =>
+    ((Erlang gen_tcp)
+      connect: {127, 0, 0, 1}
+      with: self.srv port
+      with: #(#binary, {#packet, #raw}, {#active, false})) unwrap
+
+  responseOn: client body: n =>
+    head := ""
+    [(head includesSubstring: "\r\n\r\n") not]
+      whileTrue: [
+        head := head
+          concat: (((Erlang gen_tcp)
+            recv: client
+            with: 1
+            with: 2000) unwrap)
+      ]
+    n =:= 0 ifTrue: [^head asStringUnchecked]
+    (head
+      concat: (((Erlang gen_tcp)
+        recv: client
+        with: n
+        with: 2000) unwrap)) asStringUnchecked
+
+  scenario: raw body: n =>
+    client := self connect
+    (Erlang gen_tcp) send: client with: raw
+    resp := self responseOn: client body: n
+    (Erlang gen_tcp) close: client
+    resp
+
+  echoServer =>
+    HTTPServer
+      start: 0
+      handler: [:req | HTTPResponse new: #{#status => 200, #body => req body}]
+      options: #{#backend => #buccaneer}
+
+  testMinimalRawGet =>
+    self.srv := HTTPServer
+      start: 0
+      handler: [:req | HTTPResponse new: #{#status => 200, #body => "hi"}]
+      options: #{#backend => #buccaneer}
+    self assert: self.srv port > 0
+    resp := self scenario: "GET /hello HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n" body: 2
+    self assert: (resp endsWith: "hi")
+
+  testDuplicateHeadersStaySeparatePairs =>
+    self.srv := HTTPServer
+      start: 0
+      handler: [:req |
+        seen := ""
+        req headers do: [:p |
+          (p at: 1) =:= "x-dup" ifTrue: [seen := seen ++ (p at: 2) ++ ","]
+        ]
+        HTTPResponse new: #{#status => 200, #body => seen}
+      ]
+      options: #{#backend => #buccaneer}
+    resp := self scenario: "GET / HTTP/1.1\r\nhost: x\r\nx-dup: one\r\nx-dup: two\r\nconnection: close\r\n\r\n" body: 8
+    self assert: (resp endsWith: "one,two,")
+
+  testHeadRequestOmitsBody =>
+    self.srv := HTTPServer
+      start: 0
+      handler: [:req | HTTPResponse new: #{#status => 200, #body => "hi"}]
+      options: #{#backend => #buccaneer}
+    resp := self scenario: "HEAD / HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n" body: 0
+    self assert: (resp includesSubstring: "200 OK")
+    self assert: (resp includesSubstring: "content-length: 2")
+    self assert: (resp endsWith: "\r\n\r\n")
+
+  testChunkedRequestBody =>
+    self.srv := self echoServer
+    resp := self scenario: "POST /echo HTTP/1.1\r\nhost: x\r\ntransfer-encoding: chunked\r\nconnection: close\r\n\r\n5\r\nhello\r\n0\r\n\r\n" body: 5
+    self assert: (resp endsWith: "hello")
+
+  testExpectContinueServesBody =>
+    self.srv := self echoServer
+    resp := self scenario: "POST /echo HTTP/1.1\r\nhost: x\r\ncontent-length: 5\r\nexpect: 100-continue\r\nconnection: close\r\n\r\nhello" body: 5
+    self assert: (resp endsWith: "hello")
+
+  testQueryFlagWithoutValueAnswersTrue =>
+    self.srv := HTTPServer
+      start: 0
+      handler: [:req |
+        HTTPResponse
+          new: #{
+            #status => 200,
+            #body => ((req queryParams at: "flag") ++ "," ++ (req queryParams at: "x"))
+          }
+      ]
+      options: #{#backend => #buccaneer}
+    resp := self scenario: "GET /search?flag&x=1 HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n" body: 6
+    self assert: (resp endsWith: "true,1")
+
+  testBodyTooLarge413 =>
+    self.srv := HTTPServer
+      start: 0
+      handler: [:req | HTTPResponse new: #{#status => 200, #body => req body}]
+      options: #{#backend => #buccaneer, #maxBodyLength => 10}
+    resp := self scenario: "POST /echo HTTP/1.1\r\nhost: x\r\ncontent-length: 32\r\nconnection: close\r\n\r\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" body: 22
+    self assert: (resp includesSubstring: "413")
+
+  testHandlerRaiseBecomes500 =>
+    self.srv := HTTPServer
+      start: 0
+      handler: [:req | Error signal: "boom"]
+      options: #{#backend => #buccaneer}
+    resp := self scenario: "GET / HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n" body: 21
+    self assert: (resp includesSubstring: "500")
+
+  testNonResponseBecomes500 =>
+    self.srv := HTTPServer
+      start: 0
+      handler: [:req | "nope"]
+      options: #{#backend => #buccaneer}
+    resp := self scenario: "GET / HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n" body: 21
+    self assert: (resp includesSubstring: "500")
+
+  testActorHandlerEchoesBody =>
+    echo := EchoHandler spawn
+    self.srv := HTTPServer
+      start: 0
+      handler: echo
+      options: #{#backend => #buccaneer}
+    resp := self scenario: "POST /echo HTTP/1.1\r\nhost: x\r\ncontent-length: 5\r\nconnection: close\r\n\r\nhello" body: 5
+    self assert: (resp endsWith: "hello")
+    echo stop

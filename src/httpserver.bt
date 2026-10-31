@@ -8,8 +8,8 @@
 /// These two forms have different state-visibility semantics:
 ///
 /// - A **block** (or a compiled `HTTPRouter`, which dispatches to blocks
-///   internally) is invoked as a direct function call inside cowboy's own
-///   request-handling process — there is no actor mailbox involved. Any
+///   internally) is invoked as a direct function call inside the
+///   connection process — there is no actor mailbox involved. Any
 ///   `self.field` the block closes over is whatever was captured when the
 ///   block/route table was built; it is never re-read later, even if the
 ///   actor's real state changes afterward (including `attachX:`-style
@@ -26,10 +26,13 @@
 /// state.
 type HTTPHandlerLike = Block(HTTPRequest, HTTPResponse) | HTTPHandler | HTTPRouter
 
-/// HTTPServer — cowboy-backed HTTP server actor for Beamtalk.
+/// HTTPServer — HTTP server actor for Beamtalk.
 ///
-/// Wraps a cowboy listener lifecycle: start on a given port (or ephemeral
-/// port 0), dispatch incoming requests to a handler, and stop gracefully.
+/// A plain `Actor` that owns a backend listener: cowboy (the default in
+/// this phase) or Buccaneer (via `HTTPExchangeAdapter`), selected with the
+/// `#backend` option or the `BEAMTALK_HTTP_BACKEND` environment variable.
+/// The server stops when the actor stops (`terminate:` stops the owned
+/// backend).
 ///
 /// The handler may be a block receiving an `HTTPRequest` and returning
 /// an `HTTPResponse`, an actor conforming to the `HTTPHandler` protocol
@@ -61,10 +64,38 @@ type HTTPHandlerLike = Block(HTTPRequest, HTTPResponse) | HTTPHandler | HTTPRout
 /// srv stop
 /// ```
 ///
+/// ## Backend selection
+/// ```beamtalk
+/// srv := HTTPServer
+///   start: 0
+///   handler: handler
+///   options: #{ #backend => #buccaneer }
+/// ```
+///
+/// Without `#backend`, the `BEAMTALK_HTTP_BACKEND` environment variable
+/// selects the backend (`"cowboy"` or `"buccaneer"`, default `"cowboy"`),
+/// so the test suite runs unchanged on both backends.
+///
 /// @see HTTPClient (for making HTTP requests)
 /// @see HTTPRequest (for incoming request objects)
 /// @see HTTPResponse (for building response objects)
-Actor subclass: HTTPServer native: beamtalk_http_server
+Actor subclass: HTTPServer
+  /// Requested port (0 for an ephemeral port).
+  state: port :: Integer = 0
+  /// The user handler: a block, an `HTTPHandler` actor or an `HTTPRouter`.
+  state: handler :: HTTPHandlerLike | Nil = nil
+  /// The owned backend: `#cowboy` or `#buccaneer`.
+  state: backend :: Symbol = #cowboy
+  /// IP address to bind to (default `"127.0.0.1"`).
+  state: bind :: String = "127.0.0.1"
+  /// Request bodies are read in full before the handler runs; a larger
+  /// body answers 413 on the buccaneer backend (default 8 MB).
+  state: maxBodyLength :: Integer = 8000000
+  /// The owned backend server: the cowboy gen_server pid, or Buccaneer's
+  /// `ServerSupervisor`.
+  state: server = nil
+  /// The TCP port the backend is listening on.
+  state: actualPort :: Integer = 0
 
   /// Start an HTTP server on the given port with a handler block or actor.
   ///
@@ -78,20 +109,124 @@ Actor subclass: HTTPServer native: beamtalk_http_server
   /// ]
   /// ```
   class start: port :: Integer handler: handler :: HTTPHandlerLike -> HTTPServer =>
-    self spawnWith: #{#port => port, #handler => handler}
+    self
+      start: port
+      handler: handler
+      options: Dictionary new
 
   /// Start an HTTP server with additional options.
   ///
   /// Options:
   ///   - `#bind` — IP address to bind to (default `"127.0.0.1"`)
+  ///   - `#backend` — `#cowboy` or `#buccaneer` (default: the
+  ///     `BEAMTALK_HTTP_BACKEND` environment variable, `"cowboy"` when unset)
+  ///   - `#maxBodyLength` — eager body cap in bytes for the buccaneer
+  ///     backend (default 8000000; larger bodies answer 413)
   ///
   /// ## Examples
   /// ```beamtalk
   /// srv := HTTPServer start: 0 handler: handler
   ///   options: #{ #bind => "0.0.0.0" }
   /// ```
-  class start: port :: Integer handler: handler :: HTTPHandlerLike options: opts :: Dictionary(Symbol, Dynamic) -> HTTPServer =>
-    self spawnWith: (#{#port => port, #handler => handler} merge: opts)
+  class start: port :: Integer handler: handler :: HTTPHandlerLike options: opts :: Dictionary -> HTTPServer =>
+    valid := (handler isKindOf: Block) or: [
+      (handler isKindOf: HTTPRouter) or: [handler isKindOf: Actor]
+    ]
+    valid ifFalse: [
+      Error signal: "Handler must be a block, an actor, or an HTTPRouter"
+    ]
+    srv := self
+      spawnWith: #{
+        #port => port,
+        #handler => handler,
+        #backend => (self resolveBackend: opts),
+        #bind => (opts at: #bind ifAbsent: ["127.0.0.1"]),
+        #maxBodyLength => (opts at: #maxBodyLength ifAbsent: [8000000])
+      }
+    srv bindBackend
+    srv
+
+  /// The `#backend` option, or the environment when it is absent.
+  class resolveBackend: opts :: Dictionary -> Symbol =>
+    raw := opts at: #backend ifAbsent: [nil]
+    raw isNil ifTrue: [^self backendFromEnv]
+    (raw =:= #cowboy or: [raw =:= #buccaneer]) ifTrue: [^raw]
+    Error signal: "Invalid value for #backend: must be #cowboy or #buccaneer"
+
+  /// `BEAMTALK_HTTP_BACKEND` (`"cowboy"` when unset); anything else is a
+  /// fail-fast error so a typo cannot silently pick a backend.
+  class backendFromEnv -> Symbol =>
+    name := System getEnv: "BEAMTALK_HTTP_BACKEND" default: "cowboy"
+    name =:= "buccaneer" ifTrue: [^#buccaneer]
+    name =:= "cowboy" ifTrue: [^#cowboy]
+    Error signal: "Invalid BEAMTALK_HTTP_BACKEND: must be cowboy or buccaneer"
+
+  /// Internal: start the owned backend listener. Runs synchronously from
+  /// `start:handler:options:`, so a bad port or bind address fails fast.
+  bindBackend =>
+    self.backend =:= #buccaneer ifTrue: [^self bindBuccaneer]
+    self bindCowboy
+
+  /// Internal: own the existing cowboy gen_server; its request handling
+  /// is unchanged.
+  bindCowboy =>
+    started := Erlang beamtalk_http_server start_link: #{
+      #port => self.port,
+      #handler => self.handler,
+      #bind => self.bind
+    }
+    started isError ifTrue: [
+      Error signal: ("Failed to start HTTP server: " ++ started error printString)
+    ]
+    pid := started value
+    self.server := pid
+    self.actualPort := (Erlang gen_server) call: pid with: {#port, #()}
+    self
+
+  /// Internal: own a Buccaneer server fronted by an `HTTPExchangeAdapter`.
+  /// `#bind` maps to Catalina's `{#ip, ...}` transport option.
+  bindBuccaneer =>
+    adapter := HttpExchangeAdapter new: #{
+      #handler => self.handler,
+      #maxBodyLength => self.maxBodyLength
+    }
+    opts := #{
+      #port => self.port,
+      #handler => adapter,
+      #ip => (self parseBindIp: self.bind),
+      #displayHandler => self.handler,
+      #startupLog => false
+    }
+    started := Buccaneer start: opts
+    started isError ifTrue: [
+      Error signal: ("Failed to start HTTP server: " ++ started error printString)
+    ]
+    srv := started value
+    self.server := srv
+    found := ((srv listenerInfo) unwrap) at: 2
+    portNum := found match: [
+      n :: Integer -> n;
+      _ -> Error signal: "Buccaneer listenerInfo answered a non-integer port"
+    ]
+    self.actualPort := portNum
+    self
+
+  /// Internal: a `#bind` string as a Catalina `{#ip, ...}` address.
+  parseBindIp: bind =>
+    (bind isKindOf: String) ifFalse: [Error signal: "Bind must be a String"]
+    bytes := (Erlang beamtalk_http_text) unwrap_string: bind
+    chars := #()
+    i := 1
+    [i <= bytes size]
+      whileTrue: [
+        chars := chars add: (bytes at: i)
+        i := i + 1
+      ]
+    parsed := (Erlang inet) parse_address: chars
+    parsed isError ifTrue: [
+      Error signal: "Invalid bind address: must be a valid IP address"
+    ]
+    parsed value
 
   /// Return the TCP port this server is listening on.
   ///
@@ -102,7 +237,18 @@ Actor subclass: HTTPServer native: beamtalk_http_server
   /// ```beamtalk
   /// srv port   // => 8080
   /// ```
-  port -> Integer => self delegate
+  port -> Integer => self.actualPort
+
+  /// Stop the owned backend when the actor stops.
+  terminate: _reason =>
+    self.server isNil
+      ifFalse: [
+        self.backend =:= #buccaneer ifTrue: [
+          self.server stop: 5000
+        ] ifFalse: [(Erlang gen_server) stop: self.server]
+      ]
+    nil
 
   /// Human-readable representation.
-  printString -> String => self delegate
+  printString -> String =>
+    "an HTTPServer(port: " ++ self.actualPort printString ++ ")"

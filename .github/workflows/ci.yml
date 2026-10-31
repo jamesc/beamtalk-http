@@ -39,5 +39,8 @@ jobs:
       - name: Build
         run: just build
 
-      - name: Test
+      - name: Test (cowboy backend)
         run: just test
+
+      - name: Test (buccaneer backend)
+        run: just test-buccaneer

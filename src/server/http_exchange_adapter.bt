@@ -1,0 +1,196 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// HttpExchangeAdapter — Buccaneer's `ExchangeHandler` for beamtalk-http.
+///
+/// Runs in the exchange's owner process (the connection process): it maps
+/// one `Exchange` onto an `HTTPRequest` (the body read eagerly, bounded by
+/// `#maxBodyLength`, as cowboy reads it today), dispatches to a block, an
+/// `HTTPHandler` actor or an `HTTPRouter`, and answers the `HTTPResponse`
+/// with `sendResp:headers:body:`. A raise, or an answer that is not an
+/// `HTTPResponse`, becomes a 500, as the cowboy handler does today.
+///
+/// Behaviour differences from cowboy are documented in the README: no
+/// `server` response header, and duplicate request headers stay separate
+/// pairs instead of being comma-joined.
+Value subclass: HttpExchangeAdapter
+  /// The user handler: a block, an `HTTPHandler` actor or an `HTTPRouter`.
+  field: handler :: HTTPHandlerLike | Nil = nil
+  /// The body is read in full before the handler runs; a larger body
+  /// answers 413 (default 8 MB).
+  field: maxBodyLength :: Integer = 8000000
+
+  /// Handle one request. The answer is ignored; a response (or a 500) is
+  /// always sent before returning, so the pipeline's commit rules hold.
+  call: ex =>
+    [self serve: ex]
+      on: Exception
+      do: [:e |
+        Logger error: ("HttpExchangeAdapter handler failed: " ++ e message) metadata: #{
+          #domain => #(#http)
+        }
+        (ex state =:= #unset)
+          ifTrue: [
+            self
+              sendStatus: 500
+              body: "Internal Server Error"
+              on: ex
+          ]
+      ]
+    nil
+
+  /// Build the request, dispatch it, and send the response.
+  serve: ex =>
+    req := self requestFrom: ex
+    req isNil ifTrue: [^nil]
+    resp := self dispatch: req
+    (resp isKindOf: HTTPResponse)
+      ifFalse: [
+        Logger error: ("HttpExchangeAdapter handler answered a non-HTTPResponse: " ++ resp printString) metadata: #{
+          #domain => #(#http)
+        }
+        ^self
+          sendStatus: 500
+          body: "Internal Server Error"
+          on: ex
+      ]
+    ex
+      sendResp: resp status
+      headers: (self tuplesFrom: resp headers)
+      body: resp body
+    nil
+
+  /// The `HTTPRequest` for this exchange, or nil after sending a 4xx/500:
+  /// the method and path are Strings (anything else is rejected with a
+  /// 400 before the handler runs), header names arrive lowercase, and the
+  /// body is a String when its bytes are valid UTF-8, a Binary otherwise.
+  requestFrom: ex =>
+    headers := self pairsFrom: ex headers on: ex
+    headers isNil ifTrue: [^nil]
+    body := self bodyFrom: ex
+    body isNil ifTrue: [^nil]
+    query := self queryFrom: ex
+    query isNil ifTrue: [^nil]
+    HTTPRequest
+      new: #{
+        #method => ex method,
+        #path => ex path,
+        #headers => headers,
+        #body => body,
+        #queryParams => query,
+        #params => #{}
+      }
+
+  /// Header tuples as `#(name, value)` pairs. A value whose bytes are not
+  /// valid UTF-8 is a 400, as the cowboy handler answers today.
+  pairsFrom: headers on: ex =>
+    out := #()
+    headers
+      do: [:h |
+        {name, value} := h
+        tagged := (Erlang beamtalk_http_text) maybe_tag: value
+        (tagged isKindOf: String) ifFalse: [^self badRequest: ex]
+        out := out add: #(name, tagged)
+      ]
+    out
+
+  /// The whole body, or nil after sending a 413/500. A `#body_too_large`
+  /// answers 413; a body that can no longer be read (`#timeout`,
+  /// `#closed`) answers 500 and the pipeline closes the connection.
+  bodyFrom: ex =>
+    read := ex readAll: self.maxBodyLength
+    read isError
+      ifTrue: [
+        reason := read error
+        reason =:= #body_too_large
+          ifTrue: [
+            ^self
+              sendStatus: 413
+              body: "Request Entity Too Large"
+              on: ex
+          ]
+        ^self
+          sendStatus: 500
+          body: "Internal Server Error"
+          on: ex
+      ]
+    (Erlang beamtalk_http_text) maybe_tag: read value
+
+  /// The raw query through `uri_string:dissect_query`, or nil after
+  /// sending a 400. A key without a value (cowboy's `?flag`) answers
+  /// `"true"`; a key or value whose percent-decoded bytes are not valid
+  /// UTF-8 is a 400, as the cowboy handler answers today.
+  queryFrom: ex =>
+    raw := ex query
+    raw isNil ifTrue: [^Dictionary new]
+    pairs := (Erlang uri_string) dissect_query: ((Erlang beamtalk_http_text) unwrap_string: raw)
+    out := Dictionary new
+    pairs
+      do: [:kv |
+        {k, v} := kv
+        key := (Erlang beamtalk_http_text) maybe_tag: k
+        (key isKindOf: String) ifFalse: [^self badRequest: ex]
+        val := (v isKindOf: Binary) ifTrue: [
+          (Erlang beamtalk_http_text) maybe_tag: v
+        ] ifFalse: ["true"]
+        (val isKindOf: String) ifFalse: [^self badRequest: ex]
+        out := out at: key put: val
+      ]
+    out
+
+  /// Dispatch to a router, a block or an `HTTPHandler` actor (a real
+  /// actor send, as the cowboy handler does today; the actor never
+  /// touches the Exchange).
+  dispatch: req =>
+    handler := self.handler
+    (handler isKindOf: HTTPRouter) ifTrue: [
+      ^self dispatchRouter: handler request: req
+    ]
+    (handler isKindOf: Block) ifTrue: [^handler value: req]
+    handler handle: req
+
+  /// Match with the router module (which stays native until Phase 8),
+  /// then run the route's block with the matched params; 404 and 405 as
+  /// the cowboy handler answers them today.
+  dispatchRouter: router request: req =>
+    found := Erlang beamtalk_http_router
+      match: router compiledRoutes
+      with: req method
+      with: req path
+    found match: [
+      {#ok, routeHandler, params} -> routeHandler value: (req withParams: params);
+      #method_not_allowed -> HTTPResponse
+        new: #{
+          #status => 405,
+          #headers => #(#("content-type", "text/plain")),
+          #body => "Method Not Allowed"
+        };
+      #not_found -> router notFoundHandler isNil
+        ifTrue: [
+          HTTPResponse
+            new: #{
+              #status => 404,
+              #headers => #(#("content-type", "text/plain")),
+              #body => "Not Found"
+            }
+        ]
+        ifFalse: [router notFoundHandler value: req]
+    ]
+
+  /// Response header pairs as `{name, value}` tuples for the engine.
+  tuplesFrom: pairs => pairs collect: [:pair | {(pair at: 1), (pair at: 2)}]
+
+  /// Answer 400 for bytes that are not valid UTF-8 at a text boundary.
+  badRequest: ex =>
+    self
+      sendStatus: 400
+      body: "Bad Request"
+      on: ex
+
+  /// Send a plain-text error response.
+  sendStatus: status :: Integer body: text :: String on: ex =>
+    ex
+      sendResp: status
+      headers: #({"content-type", "text/plain"})
+      body: text
+    nil

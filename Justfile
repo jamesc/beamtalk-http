@@ -12,6 +12,10 @@ build:
 test:
     beamtalk test
 
+# Run the test suite on the buccaneer backend (same tests, unchanged)
+test-buccaneer:
+    BEAMTALK_HTTP_BACKEND=buccaneer beamtalk test
+
 # Check formatting
 fmt:
     beamtalk fmt-check
@@ -28,8 +32,8 @@ lint:
 clean:
     rm -rf _build
 
-# Full CI check (fmt + lint + build + test)
-ci: fmt lint build test
+# Full CI check (fmt + lint + build + test on both backends)
+ci: fmt lint build test test-buccaneer
 
 # Tag a release from beamtalk.toml version
 release:
