@@ -1,0 +1,17 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// Test `WebSocketHandler` without the optional callbacks: no
+/// `onInfo:`, no `onClose:`. The adapter must leave other messages
+/// alone and accept a missing `onClose:`.
+sealed typed Value subclass: WsMinimalHandler
+  field: texts :: Integer = 0
+
+  class onOpen: _ws :: WebSocketHandle request: _req :: HTTPRequest -> WsMinimalHandler =>
+    self new
+
+  onText: _text :: String ws: _ws :: WebSocketHandle -> WsMinimalHandler =>
+    self withTexts: self texts + 1
+
+  onBinary: _data :: Binary ws: _ws :: WebSocketHandle -> WsMinimalHandler =>
+    self

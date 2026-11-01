@@ -142,6 +142,67 @@ error anywhere else. (`req body` answers the buffered body off-owner,
 so actors keep working; without an exchange, as on cowboy, `readChunk`
 and `inform:headers:` answer `Result error: #not_supported`.)
 
+### WebSocket (buccaneer backend)
+
+Any handler — block, router or `HTTPHandler` actor — upgrades a
+connection by answering `HTTPResponse upgradeWebSocket: HandlerClass`:
+
+```beamtalk
+HTTPServer start: 8080 handler: [:req |
+  HTTPResponse upgradeWebSocket: EchoHandler] options: #{#backend => #buccaneer}
+```
+
+`HandlerClass` makes a `WebSocketHandler` Value that runs in the
+connection process — no actor per connection, no extra hop per frame.
+The handler is its own state: `onOpen:request:` (sent to the class)
+answers the first state, and each data callback answers the next:
+
+```beamtalk
+sealed Value subclass: EchoHandler
+  class onOpen: ws :: WebSocketHandle request: req :: HTTPRequest -> EchoHandler =>
+    self new
+
+  onText: text :: String ws: ws :: WebSocketHandle -> EchoHandler =>
+    ws sendText: text
+    self
+
+  onClose: reason :: Object -> Object => nil
+```
+
+`onBinary:` takes the binary frames, `onInfo:` (optional) takes any
+other message to the connection process, and `onClose:` (optional)
+ends it — `#normal`, `#remote`, `#shutdown`, `#timeout` or
+`{#error, reason}`, as the engine reports it. Pings are answered by
+the engine itself, so the handler never sees control frames. Frames
+go out through `ws` (`sendText:`, `sendBinary:`, `close:`,
+`close:`), a handle owned by the connection process that the handler
+may keep in a field. Like the streaming handles, it is owner-bound:
+anything but the connection process raises `#not_owner`.
+
+A handler that wants an actor forwards to one itself: create or look
+up the actor in `onOpen:`, keep it in a field, and cast each message
+to it. The actor pushes back by sending a message to the connection
+process (`ws pid`), which arrives in the handler's `onInfo:`. The
+actor never touches `ws`:
+
+```beamtalk
+class onOpen: ws :: WebSocketHandle request: req :: HTTPRequest -> RoomHandler =>
+  room := WsRoomActor spawn
+  room join: ws pid!
+  (self new withRoom: room) withWsPid: ws pid
+
+onText: text :: String ws: _ws :: WebSocketHandle -> RoomHandler =>
+  self room post: text!
+  self
+
+onInfo: message :: Object ws: ws :: WebSocketHandle -> RoomHandler =>
+  message match: [
+    {#roomCast, text} -> ws sendText: (text asStringUnchecked);
+    _ -> nil
+  ]
+  self
+```
+
 ### HTTP Router
 
 ```beamtalk

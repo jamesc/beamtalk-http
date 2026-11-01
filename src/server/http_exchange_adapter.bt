@@ -73,6 +73,13 @@ Object subclass: HttpExchangeAdapter
       }
     resp := self dispatch: handler request: req
     (resp isKindOf: HTTPResponse) ifFalse: [^self send500: ex]
+    resp websocketHandler notNil
+      ifTrue: [
+        ^self
+          runUpgrade: ex
+          response: resp
+          request: req
+      ]
     stream := resp stream
     stream notNil ifTrue: [^self runStream: ex block: stream]
     file := resp file
@@ -96,6 +103,19 @@ Object subclass: HttpExchangeAdapter
   /// never started is a 500. A raise propagates to `serve`, which passes
   /// it to the engine once the headers are out (close and log) and 500s
   /// otherwise.
+  /// Upgrade the connection to WebSocket through the response's
+  /// handler class. The engine validates the request, sends 101 and
+  /// hands the connection over after this answers.
+  ///
+  /// ## Arguments
+  /// - `ex` (Exchange) — the upgrade exchange.
+  /// - `response` (HTTPResponse) — carries the handler class in
+  ///   `websocketHandler`.
+  /// - `req` (HTTPRequest) — the upgrade request, passed to the
+  ///   handler's `onOpen:request:`.
+  class runUpgrade: ex :: Exchange response: resp :: HTTPResponse request: req :: HTTPRequest -> Object =>
+    ex upgradeToWebSocket: (HttpWebSocketAdapter handler: resp websocketHandler request: req) options: #{}
+
   class runStream: ex :: Exchange block: block :: Block(HttpChunkWriter, Object) -> Object =>
     block value: (HttpChunkWriter exchange: ex)
     ex state match: [

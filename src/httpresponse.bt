@@ -42,6 +42,12 @@ sealed Value subclass: HTTPResponse
   field: fileOffset :: Integer = 0
   /// Bytes sent by a file response, or `#all` for the rest of the file.
   field: fileLength :: Integer | Symbol = #all
+  /// A WebSocket upgrade: the handler class the adapter runs the
+  /// connection through. Set only by `upgradeWebSocket:`; when set,
+  /// `status`/`headers`/`body`/`stream`/`file` are ignored and the
+  /// engine sends 101 and hands the connection over after the
+  /// handler answers.
+  field: websocketHandler :: Object | Nil = nil
 
   /// A chunked response: the adapter runs `block` in the connection
   /// process with an `HttpChunkWriter`, so this works the same for block,
@@ -82,6 +88,24 @@ sealed Value subclass: HTTPResponse
   /// file with `#all`.
   class file: path :: String offset: offset :: Integer length: length :: Integer | Symbol -> HTTPResponse =>
     self new: #{#file => path, #fileOffset => offset, #fileLength => length}
+
+  /// Upgrade the connection to WebSocket through `handlerClass`, a
+  /// `WebSocketHandler` Value class. The adapter answers 101 and runs
+  /// the connection through it; any handler — block, router or
+  /// `HTTPHandler` actor — may answer this:
+  ///
+  /// ## Arguments
+  /// - `handlerClass` (Object) — the `WebSocketHandler` class. Its
+  ///   `onOpen:request:` answers the first handler state; `onText:`,
+  ///   `onBinary:` and the optional `onInfo:` answer the next.
+  ///
+  /// ## Examples
+  /// ```beamtalk
+  /// HTTPServer start: 8080 handler: [:req |
+  ///   HTTPResponse upgradeWebSocket: EchoHandler] options: #{#backend => #buccaneer}
+  /// ```
+  class upgradeWebSocket: handlerClass :: Object -> HTTPResponse =>
+    self new: #{#websocketHandler => handlerClass}
 
   /// True if the status code is in the 2xx success range.
   ///
