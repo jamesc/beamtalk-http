@@ -1,0 +1,234 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// HttpExchangeAdapter — maps Buccaneer's engine interface onto
+/// beamtalk-http's `HTTPRequest` / `HTTPResponse`.
+///
+/// Runs inside the connection process: builds an `HTTPRequest` from the
+/// `Exchange` (reading the whole body first, as the cowboy backend does),
+/// dispatches to a block, an `HTTPHandler` actor or an `HTTPRouter`, and
+/// answers with `sendResp:`. Behaviour differences from cowboy are noted
+/// in the README.
+Object subclass: HttpExchangeAdapter
+
+  /// Largest request body read before running the handler (8 MB, as
+  /// Bandit). Larger bodies answer 413.
+  class maxBodyBytes -> Integer => 8000000
+
+  /// Serve one request: build the `HTTPRequest`, dispatch, send the
+  /// `HTTPResponse`. Answers 400 for a request the handler must never
+  /// see (non-UTF-8 header value or query part), 413 for an over-large
+  /// body, and 500 for anything else — a raise in the handler or a
+  /// non-`HTTPResponse` answer included, as the cowboy backend does.
+  /// The engine sends 100-continue and HEAD/204/304 framing itself.
+  class serve: ex :: Exchange handler: handler -> Object =>
+    [self respond: ex handler: handler]
+      on: Exception
+      do: [:e |
+        Logger error: ("HTTP handler failed: " ++ e printString) metadata: #{
+          #domain => #(#http)
+        }
+        self send500: ex
+      ]
+
+  class respond: ex :: Exchange handler: handler -> Object =>
+    query := self parseQuery: ex query
+    query isNil ifTrue: [^self send400: ex reason: "invalid UTF-8 in query"]
+    headers := self requestHeaders: ex headers
+    headers isNil ifTrue: [^self send400: ex reason: "invalid UTF-8 in header"]
+    body := self readBody: ex
+    body isNil ifTrue: [^nil]
+    req := HTTPRequest
+      new: #{
+        #method => ex method,
+        #path => ex path,
+        #headers => headers,
+        #body => body,
+        #queryParams => query,
+        #params => #{}
+      }
+    resp := self dispatch: handler request: req
+    (resp isKindOf: HTTPResponse) ifFalse: [^self send500: ex]
+    ex
+      sendResp: resp status
+      headers: (self responseHeaders: resp headers)
+      body: resp body
+
+  /// Dispatch to a block, an `HTTPHandler` actor (a real actor send, as
+  /// the cowboy backend does) or an `HTTPRouter`. The router matcher
+  /// stays native, shared with the cowboy backend.
+  class dispatch: handler request: req :: HTTPRequest -> Object =>
+    (handler isKindOf: Block) ifTrue: [^handler value: req]
+    (handler isKindOf: HTTPRouter) ifTrue: [
+      ^self dispatchRouter: handler request: req
+    ]
+    handler handle: req
+
+  class dispatchRouter: router :: HTTPRouter request: req :: HTTPRequest -> Object =>
+    matched := router match: req method path: req path
+    matched =:= #method_not_allowed
+      ifTrue: [
+        ^HTTPResponse
+          new: #{
+            #status => 405,
+            #headers => #(#("content-type", "text/plain")),
+            #body => "Method Not Allowed"
+          }
+      ]
+    matched =:= #not_found
+      ifTrue: [
+        nf := router notFoundHandler
+        nf isNil
+          ifTrue: [
+            ^HTTPResponse
+              new: #{
+                #status => 404,
+                #headers => #(#("content-type", "text/plain")),
+                #body => "Not Found"
+              }
+          ]
+        ^nf value: req
+      ]
+    {_, h, p} := matched
+    h value: (req withParams: p)
+
+  /// Engine header tuples to `HTTPRequest` pairs. Names are lowercase
+  /// Strings by the time the engine hands them over; values may be
+  /// opaque Binaries, which cowboy would reject — answer nil so the
+  /// caller sends 400 without running the handler.
+  class requestHeaders: headers -> List(List(String)) | Nil =>
+    out := #()
+    headers
+      do: [:t |
+        name := t at: 1
+        value := t at: 2
+        (name isKindOf: String) ifFalse: [^nil]
+        text := self headerValueText: value
+        text isNil ifTrue: [^nil]
+        out := out add: #(name, text)
+      ]
+    out
+
+  /// A header value to text: Strings pass through, Binaries must be
+  /// valid UTF-8 (nil otherwise, so the caller answers 400).
+  class headerValueText: value -> String | Nil =>
+    (value isKindOf: String) ifTrue: [^value]
+    converted := value asString
+    converted isError ifTrue: [^nil]
+    converted value
+
+  /// The whole body, as the cowboy backend reads it before dispatch: a
+  /// String when valid UTF-8, a Binary otherwise. Answers nil after
+  /// sending 413 for an over-large body; other read failures raise.
+  class readBody: ex :: Exchange -> String | Binary | Nil =>
+    read := ex readAll: self maxBodyBytes
+    read isError
+      ifTrue: [
+        read error =:= #body_too_large ifTrue: [^self send413: ex]
+        Error signal: ("Request body read failed: " ++ read error printString)
+      ]
+    data := read value
+    (data isKindOf: String) ifTrue: [^data]
+    converted := data asString
+    converted isError ifTrue: [^data]
+    converted value
+
+  /// `HTTPResponse` header pairs to engine tuples.
+  class responseHeaders: headers :: List(List(String)) -> List(Tuple) =>
+    headers collect: [:pair | {(pair at: 1), (pair at: 2)}]
+
+  /// Raw query string to parameters, with cowboy's rules: `?flag`
+  /// means `"true"`, `+` is a space, `%XX` decodes a byte. Answers nil
+  /// when a part is not valid UTF-8.
+  class parseQuery: query :: String | Nil -> Dictionary(String, String) | Nil =>
+    query isNil ifTrue: [^#{}]
+    query =:= "" ifTrue: [^#{}]
+    out := Dictionary new
+    (query split: "&")
+      do: [:part |
+        idx := part indexOf: "="
+        key := self decodeQueryPart: (idx isNil ifTrue: [
+          part
+        ] ifFalse: [part take: idx - 1])
+        val := idx isNil ifTrue: [
+          "true"
+        ] ifFalse: [self decodeQueryPart: (part drop: idx)]
+        (key isNil or: [val isNil]) ifTrue: [^nil]
+        out := out at: key put: val
+      ]
+    out
+
+  class decodeQueryPart: s :: String -> String | Nil =>
+    self decodeQueryPart: s into: ""
+
+  class decodeQueryPart: rest :: String into: out :: String -> String | Nil =>
+    rest isEmpty ifTrue: [^out]
+    ch := rest at: 1
+    ch =:= "+" ifTrue: [^self decodeQueryPart: (rest drop: 1) into: out ++ " "]
+    ch =:= "%" ifFalse: [^self decodeQueryPart: (rest drop: 1) into: out ++ ch]
+    run := self percentRun: rest into: #()
+    run isNil ifTrue: [^nil]
+    rest := run at: 2
+    decoded := (Binary fromBytes: (run at: 1)) asString
+    decoded isError ifTrue: [^nil]
+    self decodeQueryPart: rest into: out ++ decoded value
+
+  /// Consume all contiguous `%XX` groups at the head of `s`: answers
+  /// `{bytes, rest}` or nil on a short or non-hex group.
+  class percentRun: s :: String -> Tuple(List(Integer), String) | Nil =>
+    self percentRun: s into: #()
+
+  class percentRun: rest :: String into: bytes :: List(Integer) -> Tuple(List(Integer), String) | Nil =>
+    ((rest size >= 3) and: [
+      (rest at: 1) =:= "%"
+    ]) ifFalse: [^bytes isEmpty ifTrue: [nil] ifFalse: [{bytes, rest}]]
+    hi := self nibble: (rest at: 2)
+    lo := self nibble: (rest at: 3)
+    (hi isNil or: [lo isNil]) ifTrue: [^nil]
+    self percentRun: (rest drop: 3) into: (bytes add: hi * 16 + lo)
+
+  class nibble: ch :: String -> Integer | Nil =>
+    pos := "0123456789ABCDEFabcdef" indexOf: ch
+    pos isNil ifTrue: [^nil]
+    pos <= 16 ifTrue: [^pos - 1]
+    pos - 7
+
+  /// An IPv4 `#bind` address to the `{ip, ...}` tuple Catalina's
+  /// transport options take. Raises like the cowboy backend does for
+  /// anything that is not a dotted quad.
+  class parseBindIp: bind :: String -> Tuple =>
+    parts := bind split: "."
+    parts size =:= 4 ifFalse: [
+      Error signal: "Bind must be an IPv4 address (e.g. 127.0.0.1)"
+    ]
+    octets := parts collect: [:p | self parseOctet: p]
+    {(octets at: 1), (octets at: 2), (octets at: 3), (octets at: 4)}
+
+  class parseOctet: s :: String -> Integer =>
+    n := [
+      s asInteger
+    ] on: Exception do: [:e |
+      Error signal: "Bind must be an IPv4 address (e.g. 127.0.0.1)"
+    ]
+    (n < 0 or: [
+      n > 255
+    ]) ifTrue: [Error signal: "Bind must be an IPv4 address (e.g. 127.0.0.1)"]
+    n
+
+  class send400: ex :: Exchange reason: why :: String -> Object =>
+    ex
+      sendResp: 400
+      headers: #({"content-type", "text/plain"})
+      body: ("Bad Request: " ++ why)
+
+  class send413: ex :: Exchange -> Object =>
+    ex
+      sendResp: 413
+      headers: #({"content-type", "text/plain"})
+      body: "Request Entity Too Large"
+
+  class send500: ex :: Exchange -> Object =>
+    ex
+      sendResp: 500
+      headers: #({"content-type", "text/plain"})
+      body: "Internal Server Error"

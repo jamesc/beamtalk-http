@@ -1,0 +1,9 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// Test actor: answers the request method, proving the buccaneer
+/// backend dispatches to `HTTPHandler` actors with a real actor send.
+Actor subclass: EchoActor
+
+  handle: req :: HTTPRequest -> HTTPResponse =>
+    HTTPResponse new: #{#status => 200, #body => req method}

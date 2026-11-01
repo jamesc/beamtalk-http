@@ -35,6 +35,11 @@ type HTTPHandlerLike = Block(HTTPRequest, HTTPResponse) | HTTPHandler | HTTPRout
 /// an `HTTPResponse`, an actor conforming to the `HTTPHandler` protocol
 /// (responding to `handle:`), or a compiled `HTTPRouter`.
 ///
+/// Two backends serve requests identically: `#cowboy` (the default) and
+/// `#buccaneer`, a pure-Beamtalk engine reached through
+/// `HttpExchangeAdapter`. Anything the handler answers that is not an
+/// `HTTPResponse` is a 500 on both, as is any raise.
+///
 /// As an Actor, HTTPServer can be supervised for automatic restart on
 /// failure and integrates with the standard Actor lifecycle (`stop`,
 /// `isAlive`, `monitor`).
@@ -77,21 +82,56 @@ Actor subclass: HTTPServer native: beamtalk_http_server
   ///   HTTPResponse new: #{ #status => 200, #body => "hello" }
   /// ]
   /// ```
-  class start: port :: Integer handler: handler :: HTTPHandlerLike -> HTTPServer =>
-    self spawnWith: #{#port => port, #handler => handler}
+  class start: port :: Integer handler: handler :: HTTPHandlerLike -> Dynamic =>
+    self
+      start: port
+      handler: handler
+      options: #{}
 
   /// Start an HTTP server with additional options.
   ///
   /// Options:
   ///   - `#bind` — IP address to bind to (default `"127.0.0.1"`)
+  ///   - `#backend` — `#cowboy` (default) or `#buccaneer`. When absent,
+  ///     the `BEAMTALK_HTTP_BACKEND` environment variable selects the
+  ///     backend (`"cowboy"` / `"buccaneer"`); unset means cowboy.
   ///
   /// ## Examples
   /// ```beamtalk
   /// srv := HTTPServer start: 0 handler: handler
   ///   options: #{ #bind => "0.0.0.0" }
   /// ```
-  class start: port :: Integer handler: handler :: HTTPHandlerLike options: opts :: Dictionary(Symbol, Dynamic) -> HTTPServer =>
+  class start: port :: Integer handler: handler :: HTTPHandlerLike options: opts :: Dictionary(Symbol, Dynamic) -> Dynamic =>
+    backend := self resolveBackend: opts
+    backend =:= #buccaneer
+      ifTrue: [
+        ^HTTPBuccaneerServer
+          spawnWith: #{
+            #port => port,
+            #handler => handler,
+            #bind => (opts at: #bind ifAbsent: ["127.0.0.1"])
+          }
+      ]
     self spawnWith: (#{#port => port, #handler => handler} merge: opts)
+
+  /// Which backend serves this server: the explicit `#backend` option,
+  /// else `BEAMTALK_HTTP_BACKEND`, else `#cowboy`.
+  class resolveBackend: opts :: Dictionary(Symbol, Dynamic) -> Symbol =>
+    explicit := opts at: #backend ifAbsent: [nil]
+    explicit notNil
+      ifTrue: [
+        (explicit =:= #cowboy or: [
+          explicit =:= #buccaneer
+        ]) ifFalse: [
+          Error signal: "Unknown HTTP backend; expected #cowboy or #buccaneer"
+        ]
+        ^explicit
+      ]
+    env := System getEnv: "BEAMTALK_HTTP_BACKEND"
+    env isNil ifTrue: [^#cowboy]
+    env =:= "buccaneer" ifTrue: [^#buccaneer]
+    env =:= "cowboy" ifTrue: [^#cowboy]
+    Error signal: "Unknown BEAMTALK_HTTP_BACKEND; expected cowboy or buccaneer"
 
   /// Return the TCP port this server is listening on.
   ///

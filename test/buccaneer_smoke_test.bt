@@ -1,0 +1,42 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// Phase 2 gate (BT-4082): a plain Buccaneer server answers a raw-socket
+/// GET in this project's context. If this fails, the engine integration
+/// itself is broken and adapter work must wait.
+TestCase subclass: BuccaneerSmokeTest
+  field: srv = nil
+
+  tearDown => self.srv isNil ifFalse: [self.srv stop: 5000]
+
+  testEngineDirectRawGet =>
+    self.srv := (Buccaneer
+      start: #{#port => 0, #handler => [:ex |
+          ex
+            sendResp: 200
+            headers: #()
+            body: "hi"
+        ]}) unwrap
+    port := (self.srv listenerInfo unwrap) at: 2
+    client := ((Erlang gen_tcp)
+      connect: {127, 0, 0, 1}
+      with: port
+      with: #(#binary, {#packet, #raw}, {#active, false})) unwrap
+    (Erlang gen_tcp) send: client with: "GET /plain HTTP/1.1\r\nhost: x\r\n\r\n"
+    head := ""
+    [(head includesSubstring: "\r\n\r\n") not]
+      whileTrue: [
+        head := head
+          concat: (((Erlang gen_tcp)
+            recv: client
+            with: 1
+            with: 2000) unwrap)
+      ]
+    resp := (head
+      concat: (((Erlang gen_tcp)
+        recv: client
+        with: 2
+        with: 2000) unwrap)) asStringUnchecked
+    (Erlang gen_tcp) close: client
+    self assert: (resp includesSubstring: "200 OK")
+    self assert: (resp endsWith: "hi")
