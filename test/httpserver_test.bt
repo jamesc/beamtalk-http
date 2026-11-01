@@ -182,6 +182,27 @@ TestCase subclass: HTTPServerTest
       with: 2000) unwrap
     head concat: body asStringUnchecked
 
+  // ===== Streaming values need buccaneer (explicit cowboy) =====
+  testStreamWithOnCowboyBecomes500 =>
+    self.srv := HTTPServer
+      start: 0
+      handler: [:req | HTTPResponse streamWith: [:resp | resp finish]]
+      options: #{#backend => #cowboy}
+    url := "http://localhost:" ++ self.srv port asString ++ "/stream"
+    resp := (HTTPClient get: url) unwrap
+    self assert: resp status equals: 500
+
+  testFileOnCowboyBecomes500 =>
+    self.srv := HTTPServer
+      start: 0
+      handler: [:req |
+        ((HTTPResponse file: "test/fixtures/stream_file") withStatus: 200)
+      ]
+      options: #{#backend => #cowboy}
+    url := "http://localhost:" ++ self.srv port asString ++ "/file"
+    resp := (HTTPClient get: url) unwrap
+    self assert: resp status equals: 500
+
   // ===== Identity =====
   testPrintString =>
     self.srv := HTTPServer start: 0 handler: [:req |

@@ -29,6 +29,59 @@ sealed Value subclass: HTTPResponse
   field: headers :: List(List(String | Binary)) = #()
   /// Response body: a String when the bytes are valid UTF-8, otherwise a Binary.
   field: body :: String | Binary = ""
+  /// A streaming response: the block the adapter runs in the connection
+  /// process with an `HttpChunkWriter`. Set only by `streamWith:`; when
+  /// set, `status`/`headers`/`body` are ignored and the block's
+  /// `startChunked:headers:` sets them instead.
+  field: stream :: Block(HttpChunkWriter, Object) | Nil = nil
+  /// A file response: the path sent with the engine's sendfile. Set only
+  /// by `file:` / `file:offset:length:`; `status` and `headers` are set as
+  /// on any `HTTPResponse`, `body` is ignored.
+  field: file :: String | Nil = nil
+  /// First byte sent by a file response.
+  field: fileOffset :: Integer = 0
+  /// Bytes sent by a file response, or `#all` for the rest of the file.
+  field: fileLength :: Integer | Symbol = #all
+
+  /// A chunked response: the adapter runs `block` in the connection
+  /// process with an `HttpChunkWriter`, so this works the same for block,
+  /// router and `HTTPHandler` actor handlers. The block starts the
+  /// response, sends chunks and finishes it:
+  ///
+  /// ## Examples
+  /// ```beamtalk
+  /// HTTPResponse streamWith: [:resp |
+  ///   resp startChunked: 200 headers: #(#("content-type", "text/plain"))
+  ///   resp sendChunk: "part 1"
+  ///   resp sendChunk: "part 2"
+  ///   resp finish]
+  /// ```
+  ///
+  /// If the block returns without `finish`, the adapter finishes the
+  /// response; if it never calls `startChunked:headers:`, the request is
+  /// a 500. A raise after the headers went out closes the connection.
+  class streamWith: block :: Block(HttpChunkWriter, Object) -> HTTPResponse =>
+    self new: #{#stream => block}
+
+  /// The whole file at `path` as the response body, sent with the
+  /// engine's sendfile (a read-and-send loop over TLS). Set `status` and
+  /// `headers` as on any `HTTPResponse`:
+  ///
+  /// ## Examples
+  /// ```beamtalk
+  /// (HTTPResponse file: "test/fixtures/stream_file")
+  ///   withStatus: 200
+  /// ```
+  class file: path :: String -> HTTPResponse =>
+    self
+      file: path
+      offset: 0
+      length: #all
+
+  /// `length` bytes at `offset` as the response body, or the rest of the
+  /// file with `#all`.
+  class file: path :: String offset: offset :: Integer length: length :: Integer | Symbol -> HTTPResponse =>
+    self new: #{#file => path, #fileOffset => offset, #fileLength => length}
 
   /// True if the status code is in the 2xx success range.
   ///

@@ -5,14 +5,14 @@
 /// beamtalk-http's `HTTPRequest` / `HTTPResponse`.
 ///
 /// Runs inside the connection process: builds an `HTTPRequest` from the
-/// `Exchange` (reading the whole body first, as the cowboy backend does),
-/// dispatches to a block, an `HTTPHandler` actor or an `HTTPRouter`, and
-/// answers with `sendResp:`. Behaviour differences from cowboy are noted
-/// in the README.
+/// `Exchange`, dispatches to a block, an `HTTPHandler` actor or an
+/// `HTTPRouter`, and answers with `sendResp:`, `sendFile:` or a streamed
+/// `streamWith:` block. Behaviour differences from cowboy are noted in
+/// the README.
 Object subclass: HttpExchangeAdapter
 
-  /// Largest request body read before running the handler (8 MB, as
-  /// Bandit). Larger bodies answer 413.
+  /// Largest request body read at once (8 MB, as Bandit): `req body`
+  /// answers 413 past it, while `req readChunk` streams past it in parts.
   class maxBodyBytes -> Integer => 8000000
 
   /// Serve one request: build the `HTTPRequest`, dispatch, send the
@@ -20,14 +20,15 @@ Object subclass: HttpExchangeAdapter
   /// see (non-UTF-8 header value or query part, malformed body framing),
   /// 413 for an over-large body, and 500 for anything else — a raise in
   /// the handler or a non-`HTTPResponse` answer included, as the cowboy
-  /// backend does. The engine strips HEAD/204/304 bodies itself; it
-  /// sends no interim 100-continue (engine Phase 3), so a client that
-  /// waits for one hits the read timeout instead.
+  /// backend does. The engine strips HEAD/204/304 bodies itself and
+  /// sends `100 Continue` when the handler first reads the body.
   ///
   /// Engine errors pass through untouched: `TransportError` (dead
   /// socket) and `HTTPError` (protocol problems the pipeline maps to a
   /// status itself) must reach the engine's own error paths, not the
-  /// 500 below.
+  /// 500 below. So does a raise once the response has started (a
+  /// `streamWith:` block raising after `startChunked:headers:`): a 500 is
+  /// impossible then, so the engine closes the connection and logs it.
   class serve: ex :: Exchange handler: handler -> Object =>
     [self respond: ex handler: handler]
       on: Exception
@@ -35,6 +36,11 @@ Object subclass: HttpExchangeAdapter
         ((e isKindOf: TransportError) or: [
           e isKindOf: HTTPError
         ]) ifTrue: [e pass]
+        started := [
+          ex state =:= #sent or: [ex state =:= #chunked]
+        ] on: Error do: [:err | false]
+        started ifTrue: [e pass]
+        (e message startsWith: "body_too_large:") ifTrue: [^self send413: ex]
         Logger error: ("HTTP handler failed: " ++ e printString) metadata: #{
           #domain => #(#http)
         }
@@ -46,8 +52,13 @@ Object subclass: HttpExchangeAdapter
     query isNil ifTrue: [^self send400: ex reason: "invalid UTF-8 in query"]
     headers := self requestHeaders: ex headers
     headers isNil ifTrue: [^self send400: ex reason: "invalid UTF-8 in header"]
-    body := self readBody: ex
-    body isNil ifTrue: [^nil]
+    lazy := (handler isKindOf: Block) or: [handler isKindOf: HTTPRouter]
+    body := ""
+    lazy
+      ifFalse: [
+        body := self readBody: ex
+        body isNil ifTrue: [^nil]
+      ]
     req := HTTPRequest
       new: #{
         #method => ex method,
@@ -55,14 +66,52 @@ Object subclass: HttpExchangeAdapter
         #headers => headers,
         #body => body,
         #queryParams => query,
-        #params => #{}
+        #params => #{},
+        #exchange => ex
       }
     resp := self dispatch: handler request: req
     (resp isKindOf: HTTPResponse) ifFalse: [^self send500: ex]
+    stream := resp stream
+    stream notNil ifTrue: [^self runStream: ex block: stream]
+    file := resp file
+    file notNil
+      ifTrue: [
+        ^self
+          sendFileResponse: ex
+          response: resp
+          path: file
+      ]
+    drained := self readBody: ex
+    drained isNil ifTrue: [^nil]
     ex
       sendResp: resp status
       headers: (self responseHeaders: resp headers)
       body: resp body
+
+  /// Run a `streamWith:` block in the connection process with a writer
+  /// over the exchange. A clean return without `finish` finishes the
+  /// response (`commit` sends the closing chunk); a clean return that
+  /// never started is a 500. A raise propagates to `serve`, which passes
+  /// it to the engine once the headers are out (close and log) and 500s
+  /// otherwise.
+  class runStream: ex :: Exchange block: block :: Block(HttpChunkWriter, Object) -> Object =>
+    block value: (HttpChunkWriter exchange: ex)
+    state := ex state
+    state =:= #chunked ifTrue: [^ex commit]
+    state =:= #unset ifTrue: [^self send500: ex]
+    nil
+
+  /// Send a `file:` / `file:offset:length:` response, draining an unread
+  /// body first so over-large and malformed bodies keep their 413 and 400.
+  class sendFileResponse: ex :: Exchange response: resp :: HTTPResponse path: path :: String -> Object =>
+    drained := self readBody: ex
+    drained isNil ifTrue: [^nil]
+    ex
+      sendFile: resp status
+      headers: (self responseHeaders: resp headers)
+      path: path
+      offset: resp fileOffset
+      length: resp fileLength
 
   /// Dispatch to a block, an `HTTPHandler` actor (a real actor send, as
   /// the cowboy backend does) or an `HTTPRouter`. The router matcher
@@ -127,12 +176,14 @@ Object subclass: HttpExchangeAdapter
     converted isError ifTrue: [^nil]
     converted value
 
-  /// The whole body, as the cowboy backend reads it before dispatch: a
-  /// String when valid UTF-8, a Binary otherwise. Answers nil after
-  /// sending 400 (malformed framing — the engine raises `HTTPError`
-  /// for those, documented there as "a 400") or 413 (over-large body).
-  /// A dead socket signals `TransportError` so the engine takes its
-  /// quiet transport-error path instead of a 500; anything else raises.
+  /// The whole body: a String when valid UTF-8, a Binary otherwise.
+  /// Before dispatch (actor handlers, as the cowboy backend reads it
+  /// before dispatch) and after it (draining an unread body before a
+  /// plain or file response). Answers nil after sending 400 (malformed
+  /// framing — the engine raises `HTTPError` for those, documented
+  /// there as "a 400") or 413 (over-large body). A dead socket signals
+  /// `TransportError` so the engine takes its quiet transport-error path
+  /// instead of a 500; anything else raises.
   class readBody: ex :: Exchange -> String | Binary | Nil =>
     read := [ex readAll: self maxBodyBytes]
       on: HTTPError

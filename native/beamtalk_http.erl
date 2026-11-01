@@ -28,7 +28,8 @@ HTTPS is enabled automatically when the URL scheme is `https`.
 ## Response Format
 
 All requests return an `HTTPResponse` value object constructed via the
-generated HTTPResponse keyword constructor `class_status:headers:body:/4`.
+generated HTTPResponse keyword constructor
+`class_status:headers:body:stream:file:fileOffset:fileLength:/8`.
 Fields: `status` (integer), `headers` (list of [Name, Value] binary pairs),
 `body` (String).
 
@@ -449,8 +450,10 @@ collect_response(ConnPid, StreamRef, MRef, Deadline, Selector) ->
 make_response(Status, GunHeaders, Body) ->
     BtHeaders = from_gun_headers(GunHeaders),
     %% BT-4173: a text body answers a String; non-text bytes stay Binary.
-    ?BT_CLASS_MODULE_HTTPResponse:'class_status:headers:body:'(
-        undefined, Status, BtHeaders, beamtalk_http_text:maybe_tag(Body)
+    %% BT-4083: plain value — no stream, no file.
+    ?BT_CLASS_MODULE_HTTPResponse:'class_status:headers:body:stream:file:fileOffset:fileLength:'(
+        undefined, Status, BtHeaders, beamtalk_http_text:maybe_tag(Body),
+        nil, nil, 0, all
     ).
 
 -doc """

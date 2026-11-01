@@ -56,6 +56,15 @@ init(Req0, #{handler := Handler} = State) ->
 dispatch_and_reply(Handler, HttpRequest, Req1, State) ->
     try dispatch_handler(Handler, HttpRequest) of
         Response when is_map(Response) ->
+            %% BT-4083: streaming and sendfile values need the buccaneer
+            %% backend — fail loudly instead of sending a status with an
+            %% empty body.
+            Stream = maps:get(stream, Response, nil),
+            File = maps:get(file, Response, nil),
+            case Stream =/= nil orelse File =/= nil of
+                true -> throw({unsupported_backend, stream_or_file});
+                false -> ok
+            end,
             Status = get_response_field(Response, status, 200),
             Headers = get_response_headers(Response),
             %% BT-4173: the handler's String body arrives tagged —
@@ -117,7 +126,11 @@ build_request(Req0) ->
             %% BT-4173: validated text answers Strings; the body is
             %% only text when its bytes are valid UTF-8 (uploads stay
             %% Binary). Route params are tagged by the router on match.
-            HttpRequest = ?BT_CLASS_MODULE_HTTPRequest:'class_method:path:headers:body:queryParams:params:'(
+            %% BT-4083: the exchange field is cowboy's blind spot — the
+            %% cowboy handler reads the whole body itself, so block
+            %% handlers there use the buffered body and readChunk answers
+            %% #not_supported.
+            HttpRequest = ?BT_CLASS_MODULE_HTTPRequest:'class_method:path:headers:body:queryParams:params:exchange:'(
                 undefined,
                 tag_validated(Method),
                 tag_validated(Path),
@@ -127,7 +140,8 @@ build_request(Req0) ->
                     {tag_validated(K), tag_validated(V)}
                  || {K, V} <- maps:to_list(QsMap)
                 ]),
-                #{}
+                #{},
+                nil
             ),
             {ok, HttpRequest, Req1};
         {error, Field} ->
@@ -274,8 +288,10 @@ call_handler(Handler, Request) when is_pid(Handler) ->
 -dialyzer({nowarn_function, make_error_response/2}).
 -spec make_error_response(integer(), binary()) -> beamtalk_http_response:t().
 make_error_response(Status, Body) ->
-    ?BT_CLASS_MODULE_HTTPResponse:'class_status:headers:body:'(
-        undefined, Status, [[<<"content-type">>, <<"text/plain">>]], Body
+    %% BT-4083: plain value — no stream, no file.
+    ?BT_CLASS_MODULE_HTTPResponse:'class_status:headers:body:stream:file:fileOffset:fileLength:'(
+        undefined, Status, [[<<"content-type">>, <<"text/plain">>]], Body,
+        nil, nil, 0, all
     ).
 
 %% @private Extract a field from an HTTPResponse value object.
