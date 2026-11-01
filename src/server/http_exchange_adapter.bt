@@ -221,96 +221,20 @@ Object subclass: HttpExchangeAdapter
     headers collect: [:pair | {(pair at: 1), (pair at: 2)}]
 
   /// A `#bind` address to the `{ip, inet6?}` pair Catalina's transport
-  /// options take: v4 dotted quads as before, plus full and `::`-
-  /// compressed IPv6 with an optional embedded v4 tail. The engine
-  /// forwards `#inet6`, mirroring cowboy's `inet:parse_address` —
-  /// probed edge-for-edge (`::` must compress at least one group,
-  /// zones and triple colons rejected). Raises like the cowboy
-  /// backend does for anything else.
+  /// options take, via OTP's `inet:parse_address/1` — the same parser
+  /// cowboy uses. The `String` becomes a charlist with
+  /// `Binary>>asCharlist` (UTF-8 bytes, not graphemes), since the FFI
+  /// boundary maps a `String` arg to a binary. Anything else raises
+  /// like the cowboy backend does.
   class parseBind: bind :: String -> Tuple =>
-    (bind includesSubstring: ":") ifTrue: [
-      ^self parseBindIp6: bind
-    ] ifFalse: [^self parseBindIp4: bind]
-
-  class parseBindIp4: bind :: String -> Tuple =>
-    parts := bind split: "."
-    parts size =:= 4 ifFalse: [self badBind]
-    octets := parts collect: [:p | self parseOctet: p]
-    {{(octets at: 1), (octets at: 2), (octets at: 3), (octets at: 4)}, false}
-
-  class parseBindIp6: bind :: String -> Tuple =>
-    halves := bind split: "::"
-    halves size > 2 ifTrue: [self badBind]
-    head := self splitGroups: (halves at: 1)
-    tail := halves size =:= 2 ifTrue: [
-      self splitGroups: (halves at: 2)
-    ] ifFalse: [#()]
-    headVals := self expandHexGroups: head
-    tailVals := self expandBindTail: tail
-    explicit := headVals size + tailVals size
-    halves size =:= 2 ifTrue: [
-      explicit > 7 ifTrue: [self badBind]
-    ] ifFalse: [explicit =:= 8 ifFalse: [self badBind]]
-    full := headVals ++ (self zeros: 8 - explicit) ++ tailVals
-    {{(full at: 1), (full at: 2), (full at: 3), (full at: 4), (full at: 5), (full at: 6), (full at: 7), (full at: 8)}, true}
-
-  class splitGroups: s :: String -> List(String) =>
-    s isEmpty ifTrue: [^#()]
-    s split: ":"
-
-  class expandHexGroups: groups :: List(String) -> List(Integer) =>
-    groups collect: [:g | self parseHexGroup: g]
-
-  /// All groups but the last as hex; the last may be an embedded v4 tail.
-  class expandBindTail: groups :: List(String) -> List(Integer) =>
-    groups isEmpty ifTrue: [^#()]
-    groups size =:= 1 ifTrue: [^self parseBindGroup: (groups at: 1) last: true]
-    (self expandHexGroups: (groups take: groups size - 1))
-      ++ (self parseBindGroup: (groups at: groups size) last: true)
-
-  /// One textual group to 16-bit values: plain hex, or (only as the
-  /// last group) an embedded v4 tail answering two values.
-  class parseBindGroup: g :: String last: isLast :: Boolean -> List(Integer) =>
-    dotted := g includesSubstring: "."
-    dotted
-      ifTrue: [
-        isLast ifFalse: [self badBind]
-        ^self parseEmbeddedV4: g
-      ]
-    #((self parseHexGroup: g))
-
-  class parseEmbeddedV4: g :: String -> List(Integer) =>
-    octets := (g split: ".") collect: [:o | self parseOctet: o]
-    octets size =:= 4 ifFalse: [self badBind]
-    #((octets at: 1) * 256 + (octets at: 2), (octets at: 3) * 256 + (octets at: 4))
-
-  class parseHexGroup: g :: String -> Integer =>
-    ((g size >= 1) and: [g size <= 4]) ifFalse: [self badBind]
-    self parseHexGroup: g into: 0
-
-  class parseHexGroup: rest :: String into: n :: Integer -> Integer =>
-    rest isEmpty ifTrue: [^n]
-    d := QueryParser nibble: (rest take: 1)
-    d isNil ifTrue: [self badBind]
-    self parseHexGroup: (rest drop: 1) into: n * 16 + d
-
-  class zeros: n :: Integer -> List(Integer) =>
-    n =:= 0 ifTrue: [^#()]
-    (self zeros: n - 1) add: 0
+    parsed := (Erlang inet) parse_address: (bind asCharlist)
+    parsed isError ifTrue: [self badBind]
+    addr := parsed unwrap
+    (addr size =:= 4) ifTrue: [^{addr, false}]
+    ^{addr, true}
 
   class badBind -> Never =>
     Error signal: "Bind must be an IP address (e.g. 127.0.0.1 or ::1)"
-
-  class parseOctet: s :: String -> Integer =>
-    n := [
-      s asInteger
-    ] on: Exception do: [:e |
-      Error signal: "Bind must be an IPv4 address (e.g. 127.0.0.1)"
-    ]
-    (n < 0 or: [
-      n > 255
-    ]) ifTrue: [Error signal: "Bind must be an IPv4 address (e.g. 127.0.0.1)"]
-    n
 
   class send400: ex :: Exchange reason: why :: String -> Object =>
     ex
