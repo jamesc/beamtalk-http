@@ -34,15 +34,36 @@
 Protocol define: WebSocketHandler
   /// Create the first handler state for a new connection. Sent to the
   /// handler class with a handle owned by the connection process and
-  /// the upgrade's `HTTPRequest`.
+  /// the upgrade's `HTTPRequest`. Answers the handler Value that later
+  /// callbacks evolve.
+  ///
+  /// ## Arguments
+  /// - `ws` (WebSocketHandle) — the connection-owned handle.
+  /// - `req` (HTTPRequest) — the upgrade request.
   onOpen: ws :: WebSocketHandle request: req :: HTTPRequest -> Object
   /// A text frame. Answers the next handler state.
+  ///
+  /// ## Arguments
+  /// - `text` (String) — the frame body.
+  /// - `ws` (WebSocketHandle) — the connection-owned handle.
   onText: text :: String ws: ws :: WebSocketHandle -> Object
   /// A binary frame. Answers the next handler state.
+  ///
+  /// ## Arguments
+  /// - `data` (Binary) — the frame body.
+  /// - `ws` (WebSocketHandle) — the connection-owned handle.
   onBinary: data :: Binary ws: ws :: WebSocketHandle -> Object
   /// Any other message to the connection process (optional). Answers
   /// the next handler state.
+  ///
+  /// ## Arguments
+  /// - `message` (Object) — the message.
+  /// - `ws` (WebSocketHandle) — the connection-owned handle.
   onInfo: message :: Object ws: ws :: WebSocketHandle -> Object
   /// The connection is ending (optional). Answers anything; the
   /// engine ignores it.
+  ///
+  /// ## Arguments
+  /// - `reason` (Object) — `#normal`, `#remote`, `#shutdown`,
+  ///   `#timeout` or `{#error, reason}`.
   onClose: reason :: Object -> Object

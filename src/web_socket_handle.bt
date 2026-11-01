@@ -21,18 +21,28 @@ sealed typed Value subclass: WebSocketHandle
   field: pid :: Pid | Nil = nil
 
   /// Bind a handle to `pid` (the connection process).
+  ///
+  /// ## Arguments
+  /// - `pid` (Pid) — the connection process, which must be the
+  ///   caller; anything else raises `#not_owner` on use.
   class sealed for: pid :: Pid -> WebSocketHandle => self new withPid: pid
 
   /// The tag of handle-to-connection messages (reserved).
   class sealed sendTag -> Symbol => #wsSend
 
   /// Queue a text frame. Answers the handle, so sends chain.
+  ///
+  /// ## Arguments
+  /// - `text` (String) — the frame body.
   sendText: text :: String -> WebSocketHandle =>
     self ownerCheck
     self pid send: {WebSocketHandle sendTag, {#text, text}}
     self
 
   /// Queue a binary frame. Answers the handle, so sends chain.
+  ///
+  /// ## Arguments
+  /// - `data` (Binary) — the frame body.
   sendBinary: data :: Binary -> WebSocketHandle =>
     self ownerCheck
     self pid send: {WebSocketHandle sendTag, {#binary, data}}
@@ -45,6 +55,9 @@ sealed typed Value subclass: WebSocketHandle
     self
 
   /// Ask the connection to stop with `code`. Answers the handle.
+  ///
+  /// ## Arguments
+  /// - `code` (Integer) — the close code, e.g. `1000`.
   close: code :: Integer -> WebSocketHandle =>
     self ownerCheck
     self pid send: {WebSocketHandle sendTag, {#close, code}}

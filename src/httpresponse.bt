@@ -94,6 +94,11 @@ sealed Value subclass: HTTPResponse
   /// the connection through it; any handler — block, router or
   /// `HTTPHandler` actor — may answer this:
   ///
+  /// ## Arguments
+  /// - `handlerClass` (Object) — the `WebSocketHandler` class. Its
+  ///   `onOpen:request:` answers the first handler state; `onText:`,
+  ///   `onBinary:` and the optional `onInfo:` answer the next.
+  ///
   /// ## Examples
   /// ```beamtalk
   /// HTTPServer start: 8080 handler: [:req |

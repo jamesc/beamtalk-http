@@ -24,6 +24,11 @@ sealed Value subclass: HttpWebSocketAdapter
   /// A handler for `handlerClass` and the upgrade's `request`. The
   /// handle and first state arrive in `init`, in the connection
   /// process.
+  ///
+  /// ## Arguments
+  /// - `hc` (Object) — the `WebSocketHandler` class.
+  /// - `req` (HTTPRequest) — the upgrade request, passed to
+  ///   `onOpen:request:`.
   class handler: hc :: Object request: req :: HTTPRequest -> HttpWebSocketAdapter =>
     (self new withHandlerClass: hc) withRequest: req
 

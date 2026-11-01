@@ -106,6 +106,13 @@ Object subclass: HttpExchangeAdapter
   /// Upgrade the connection to WebSocket through the response's
   /// handler class. The engine validates the request, sends 101 and
   /// hands the connection over after this answers.
+  ///
+  /// ## Arguments
+  /// - `ex` (Exchange) — the upgrade exchange.
+  /// - `response` (HTTPResponse) — carries the handler class in
+  ///   `websocketHandler`.
+  /// - `req` (HTTPRequest) — the upgrade request, passed to the
+  ///   handler's `onOpen:request:`.
   class runUpgrade: ex :: Exchange response: resp :: HTTPResponse request: req :: HTTPRequest -> Object =>
     ex upgradeToWebSocket: (HttpWebSocketAdapter handler: resp websocketHandler request: req) options: #{}
 
