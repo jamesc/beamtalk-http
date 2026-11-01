@@ -23,9 +23,10 @@ Value subclass: HttpChunkWriter
 
   /// Start the response. With `content-length` set the body streams
   /// length-delimited; otherwise chunk-framed. Answers `Result ok: nil`,
-  /// or `Result error: #closed` when the client has gone. Starting twice
-  /// raises `AlreadySent`, as sending twice does.
-  startChunked: status :: Integer headers: hs :: List(List(String)) -> Result(Nil, Object) =>
+  /// or `Result error: #closed` when the client has gone (`#not_supported`
+  /// without an exchange). Starting twice raises `AlreadySent`, as
+  /// sending twice does.
+  startChunked: status :: Integer headers: hs :: List(List(String)) -> Result(Nil, Symbol | String) =>
     ex := self.exchange
     ex isNil ifTrue: [^Result error: #not_supported]
     [
@@ -35,15 +36,18 @@ Value subclass: HttpChunkWriter
 
   /// One chunk; an empty one ends the response. Answers
   /// `Result ok: nil`, or `Result error: #closed` when the client has
-  /// gone. Before `startChunked:headers:` this raises `NotChunked`.
-  sendChunk: data :: Object -> Result(Nil, Object) =>
+  /// gone (`#not_supported` without an exchange; a String message for
+  /// generic engine errors). Before `startChunked:headers:` this raises
+  /// `NotChunked`.
+  sendChunk: data :: Object -> Result(Nil, Symbol | String) =>
     ex := self.exchange
     ex isNil ifTrue: [^Result error: #not_supported]
     ex chunk: data
 
   /// End the response (the closing chunk). Answers `Result ok: nil`, or
-  /// `Result error: #closed` when the client has gone.
-  finish -> Result(Nil, Object) =>
+  /// `Result error: #closed` when the client has gone (`#not_supported`
+  /// without an exchange; a String message for generic engine errors).
+  finish -> Result(Nil, Symbol | String) =>
     ex := self.exchange
     ex isNil ifTrue: [^Result error: #not_supported]
     ex chunk: ""

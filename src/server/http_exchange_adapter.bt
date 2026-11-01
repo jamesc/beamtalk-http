@@ -96,10 +96,11 @@ Object subclass: HttpExchangeAdapter
   /// otherwise.
   class runStream: ex :: Exchange block: block :: Block(HttpChunkWriter, Object) -> Object =>
     block value: (HttpChunkWriter exchange: ex)
-    state := ex state
-    state =:= #chunked ifTrue: [^ex commit]
-    state =:= #unset ifTrue: [^self send500: ex]
-    nil
+    ex state match: [
+      #chunked -> ex commit;
+      #unset -> self send500: ex;
+      _ -> nil
+    ]
 
   /// Send a `file:` / `file:offset:length:` response, draining an unread
   /// body first so over-large and malformed bodies keep their 413 and 400.
