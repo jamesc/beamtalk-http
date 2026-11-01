@@ -1,0 +1,76 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// HttpWebSocketAdapter — Buccaneer's `WebSock` over a beamtalk-http
+/// `WebSocketHandler`.
+///
+/// A Value holding the handler class, the upgrade's `HTTPRequest`,
+/// the current handler state and the `WebSocketHandle`. The engine
+/// drives it in the connection process: `init` builds the handle
+/// and answers the handler's first state, `handleIn:` runs the data
+/// callbacks, `handleInfo:` runs `onInfo:` (or answers a queued
+/// `WebSocketHandle` frame as a push), and `terminate:` runs
+/// `onClose:`. The adapter never implements `handleControl:`, so the
+/// engine answers pings itself and the handler never sees them.
+///
+/// `terminate:` answers the handler's `onClose:` answer so tests can
+/// observe it; the engine ignores it.
+sealed Value subclass: HttpWebSocketAdapter
+  field: handlerClass :: Object = nil
+  field: request :: Object = nil
+  field: state :: Object = nil
+  field: ws :: Object = nil
+
+  /// A handler for `handlerClass` and the upgrade's `request`. The
+  /// handle and first state arrive in `init`, in the connection
+  /// process.
+  class handler: hc :: Object request: req :: HTTPRequest -> HttpWebSocketAdapter =>
+    (self new withHandlerClass: hc) withRequest: req
+
+  init -> WebSocketResult =>
+    handle := WebSocketHandle for: Pid current
+    first := self handlerClass onOpen: handle request: self request
+    WebSocketResult ok: ((self withState: first) withWs: handle)
+
+  handleIn: frame :: Tuple(Symbol, Binary) -> WebSocketResult =>
+    frame match: [
+      {#text, t} -> WebSocketResult ok: (self withState: (self state onText: (t asStringUnchecked) ws: self ws));
+      {#binary, b} -> WebSocketResult ok: (self withState: (self state onBinary: b ws: self ws))
+    ]
+
+  handleInfo: message :: Object -> WebSocketResult =>
+    message match: [
+      {#wsSend, payload} -> self sendPayload: payload;
+      _ -> self infoToHandler: message
+    ]
+
+  /// One queued `WebSocketHandle` frame: push it, or stop.
+  sendPayload: payload :: Object -> WebSocketResult =>
+    payload match: [
+      #close -> WebSocketResult stop: self;
+      {#close, code} -> code match: [
+        c :: Integer -> WebSocketResult stop: self code: c;
+        _ -> Error signal: "unknown WebSocketHandle close message"
+      ];
+      {#text, data} -> data match: [
+        t :: Binary -> WebSocketResult push: {#text, t asStringUnchecked} state: self;
+        t :: String -> WebSocketResult push: {#text, t} state: self;
+        _ -> Error signal: "unknown WebSocketHandle text message"
+      ];
+      {#binary, data} -> data match: [
+        b :: Binary -> WebSocketResult push: {#binary, b} state: self;
+        _ -> Error signal: "unknown WebSocketHandle binary message"
+      ];
+      _ -> Error signal: "unknown WebSocketHandle message"
+    ]
+
+  /// Any other message: the handler's `onInfo:`, when it has one.
+  infoToHandler: message :: Object -> WebSocketResult =>
+    (self state respondsTo: #onInfo:ws:) ifTrue: [
+      WebSocketResult ok: (self withState: (self state onInfo: message ws: self ws))
+    ] ifFalse: [WebSocketResult ok: self]
+
+  terminate: reason :: Object -> Object =>
+    (self state respondsTo: #onClose:) ifTrue: [
+      self state onClose: reason
+    ] ifFalse: [nil]

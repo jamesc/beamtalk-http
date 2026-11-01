@@ -29,7 +29,7 @@ HTTPS is enabled automatically when the URL scheme is `https`.
 
 All requests return an `HTTPResponse` value object constructed via the
 generated HTTPResponse keyword constructor
-`class_status:headers:body:stream:file:fileOffset:fileLength:/8`.
+`class_status:headers:body:stream:file:fileOffset:fileLength:websocketHandler:/9`.
 Fields: `status` (integer), `headers` (list of [Name, Value] binary pairs),
 `body` (String).
 
@@ -430,7 +430,9 @@ do_request(Method, Url, BtHeaders, Body, Timeout, MaxBodyBytes, Selector) ->
 %%
 %% `Deadline` is an absolute monotonic timestamp (ms) so the total wall-clock
 %% time across all gun:await calls is bounded by the original timeout.
--spec collect_response(pid(), reference(), reference(), integer(), unlimited | non_neg_integer(), atom()) ->
+-spec collect_response(
+    pid(), reference(), reference(), integer(), unlimited | non_neg_integer(), atom()
+) ->
     {ok, term()} | {error, term()}.
 collect_response(ConnPid, StreamRef, MRef, Deadline, MaxBodyBytes, Selector) ->
     case gun:await(ConnPid, StreamRef, remaining(Deadline), MRef) of
@@ -476,8 +478,15 @@ incrementally and the request fails as soon as the running total exceeds
 the cap, so an over-large body never materialises in memory.
 """.
 -spec collect_body(
-    pid(), reference(), reference(), integer(), atom(), non_neg_integer(), list(),
-    unlimited | non_neg_integer(), binary()
+    pid(),
+    reference(),
+    reference(),
+    integer(),
+    atom(),
+    non_neg_integer(),
+    list(),
+    unlimited | non_neg_integer(),
+    binary()
 ) -> {ok, term()} | {error, term()}.
 collect_body(ConnPid, StreamRef, MRef, Deadline, Selector, Status, GunHeaders, unlimited, _Acc) ->
     case gun:await_body(ConnPid, StreamRef, remaining(Deadline), MRef) of
@@ -512,8 +521,15 @@ collect_body(ConnPid, StreamRef, MRef, Deadline, Selector, Status, GunHeaders, C
                             ok_response(Status, GunHeaders, NewAcc);
                         nofin ->
                             collect_body(
-                                ConnPid, StreamRef, MRef, Deadline,
-                                Selector, Status, GunHeaders, Cap, NewAcc
+                                ConnPid,
+                                StreamRef,
+                                MRef,
+                                Deadline,
+                                Selector,
+                                Status,
+                                GunHeaders,
+                                Cap,
+                                NewAcc
                             )
                     end
             end;
@@ -523,14 +539,28 @@ collect_body(ConnPid, StreamRef, MRef, Deadline, Selector, Status, GunHeaders, C
         {inform, _Status, _Headers} ->
             %% Late 1xx — skip and keep collecting
             collect_body(
-                ConnPid, StreamRef, MRef, Deadline,
-                Selector, Status, GunHeaders, Cap, Acc
+                ConnPid,
+                StreamRef,
+                MRef,
+                Deadline,
+                Selector,
+                Status,
+                GunHeaders,
+                Cap,
+                Acc
             );
         {push, _PushedStreamRef, _Method, _URI, _Headers} ->
             ?LOG_DEBUG("beamtalk_http: ignoring HTTP/2 server push", #{}),
             collect_body(
-                ConnPid, StreamRef, MRef, Deadline,
-                Selector, Status, GunHeaders, Cap, Acc
+                ConnPid,
+                StreamRef,
+                MRef,
+                Deadline,
+                Selector,
+                Status,
+                GunHeaders,
+                Cap,
+                Acc
             );
         {upgrade, _Protocols, _Headers} ->
             http_error(Selector, #{}, <<"Unexpected protocol upgrade">>);
@@ -572,9 +602,16 @@ make_response(Status, GunHeaders, Body) ->
     BtHeaders = from_gun_headers(GunHeaders),
     %% BT-4173: a text body answers a String; non-text bytes stay Binary.
     %% BT-4083: plain value — no stream, no file.
-    ?BT_CLASS_MODULE_HTTPResponse:'class_status:headers:body:stream:file:fileOffset:fileLength:'(
-        undefined, Status, BtHeaders, beamtalk_http_text:maybe_tag(Body),
-        nil, nil, 0, all
+    ?BT_CLASS_MODULE_HTTPResponse:'class_status:headers:body:stream:file:fileOffset:fileLength:websocketHandler:'(
+        undefined,
+        Status,
+        BtHeaders,
+        beamtalk_http_text:maybe_tag(Body),
+        nil,
+        nil,
+        0,
+        all,
+        nil
     ).
 
 -doc """
@@ -642,11 +679,12 @@ build_gun_opts(tls, Host) ->
             {verify, verify_peer},
             {cacerts, public_key:cacerts_get()}
             | sni_opts(Host)
-        ] ++ [
-            {customize_hostname_check, [
-                {match_fun, public_key:pkix_verify_hostname_match_fun(https)}
-            ]}
-        ]
+        ] ++
+            [
+                {customize_hostname_check, [
+                    {match_fun, public_key:pkix_verify_hostname_match_fun(https)}
+                ]}
+            ]
     }).
 
 -doc """

@@ -1,0 +1,98 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// Unit tests for `HttpWebSocketAdapter` and `WebSocketHandle`: no
+/// server, no socket. The test process stands in for the connection
+/// process, so `ws sendText:` lands in this mailbox and `mailed:`
+/// reads it back through `process_info`.
+TestCase subclass: WebSocketAdapterTest
+
+  adapterFor: handlerClass :: Object -> HttpWebSocketAdapter =>
+    HttpWebSocketAdapter handler: handlerClass request: self req
+
+  req -> HTTPRequest =>
+    HTTPRequest
+      new: #{
+        #method => "GET",
+        #path => "/ws",
+        #headers => #(),
+        #body => "",
+        #queryParams => #{},
+        #params => #{},
+        #exchange => nil
+      }
+
+  liveEcho -> Object => ((self adapterFor: WsEchoHandler) init) state
+
+  mailed: message :: Object -> Boolean =>
+    ((((Erlang erlang) process_info: Pid current with: #messages) at: 2) includes: message)
+
+  testInitAnswersFirstState =>
+    result := (self adapterFor: WsEchoHandler) init
+    self assert: result kind equals: #ok
+    self assert: (result state state opened) equals: true
+    self assert: (result state ws) notNil
+
+  testHandleInTextEchoes =>
+    result := self liveEcho handleIn: {#text, "hi"}
+    self assert: result kind equals: #ok
+    self assert: (result state state texts) equals: 1
+    self assert: (self mailed: {#wsSend, {#text, "hi"}}) equals: true
+
+  testHandleInBinaryEchoes =>
+    data := Binary fromBytes: #(1, 2, 3)
+    result := self liveEcho handleIn: {#binary, data}
+    self assert: result kind equals: #ok
+    self assert: (self mailed: {#wsSend, {#binary, data}}) equals: true
+
+  testHandleInfoSendPushes =>
+    result := self liveEcho handleInfo: {#wsSend, {#text, "yo"}}
+    self assert: result kind equals: #push
+    self assert: result frames equals: #({#text, "yo"})
+
+  testHandleInfoSendCloseStops =>
+    result := self liveEcho handleInfo: {#wsSend, #close}
+    self assert: result kind equals: #stop
+    self assert: result code equals: 1000
+
+  testHandleInfoSendCloseCodeStops =>
+    result := self liveEcho handleInfo: {#wsSend, {#close, 4000}}
+    self assert: result kind equals: #stop
+    self assert: result code equals: 4000
+
+  testHandleInfoOtherCallsOnInfo =>
+    result := self liveEcho handleInfo: "hello"
+    self assert: result kind equals: #ok
+    self assert: (self mailed: {#wsSend, {#text, "info"}}) equals: true
+
+  testHandleInfoWithoutOnInfoStays =>
+    live := ((self adapterFor: WsMinimalHandler) init) state
+    result := live handleInfo: "hello"
+    self assert: result kind equals: #ok
+    self assert: result state equals: live
+
+  testTerminateRunsOnClose =>
+    result := self liveEcho terminate: #normal
+    self assert: result equals: {#closed, #normal}
+
+  testTerminateWithoutOnCloseAnswersNil =>
+    live := ((self adapterFor: WsMinimalHandler) init) state
+    self assert: (live terminate: #normal) equals: nil
+
+  testHandleEnforcesOwner =>
+    bad := WebSocketHandle for: ((Erlang erlang) whereis: #init)
+    self assert: ([
+      bad sendText: "x"
+    ] on: Error do: [:e | e reason]) equals: #not_owner
+    self assert: ([
+      bad sendBinary: (Binary fromBytes: #(1))
+    ] on: Error do: [:e | e reason]) equals: #not_owner
+    self assert: ([bad close] on: Error do: [:e | e reason]) equals: #not_owner
+    self assert: ([
+      bad close: 1000
+    ] on: Error do: [:e | e reason]) equals: #not_owner
+
+  testUpgradeResponseCarriesHandler =>
+    resp := HTTPResponse upgradeWebSocket: WsEchoHandler
+    self assert: resp websocketHandler notNil
+    self assert: (resp websocketHandler =:= WsEchoHandler) equals: true

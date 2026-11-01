@@ -1,0 +1,86 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// Upgrade tests over TCP on the buccaneer backend: the 101, text
+/// and binary echoes, the actor pattern round-trip and the close
+/// reason. Callback routing itself is covered without a server in
+/// `WebSocketAdapterTest`.
+TestCase subclass: WebSocketUpgradeTest
+  field: srv = nil
+
+  setUp =>
+    (Ets exists: #wsUpgradeEvents) ifTrue: [
+      (Ets named: #wsUpgradeEvents) delete
+    ]
+    Ets new: #wsUpgradeEvents type: #set
+    self
+
+  tearDown =>
+    self.srv isNil ifFalse: [self.srv stop]
+    self.srv := nil
+    (Ets exists: #wsUpgradeEvents) ifTrue: [
+      (Ets named: #wsUpgradeEvents) delete
+    ]
+
+  startWith: handlerClass :: Object -> Integer =>
+    self.srv := HTTPServer
+      start: 0
+      handler: [:req | HTTPResponse upgradeWebSocket: handlerClass]
+      options: #{#backend => #buccaneer}
+    self.srv port
+
+  shake: port :: Integer -> Object =>
+    client := WsTestClient connect: port
+    head := WsTestClient handshake: client path: "/ws"
+    self assert: (head includesSubstring: "101") equals: true
+    client
+
+  awaitCloseEvent -> Object =>
+    40
+      timesRepeat: [
+        reason := (Ets named: #wsUpgradeEvents) at: #close ifAbsent: [nil]
+        reason notNil ifTrue: [^reason]
+        Timer sleep: 50
+      ]
+    nil
+
+  testTextEcho =>
+    client := self shake: (self startWith: WsEchoHandler)
+    WsTestClient sendText: client data: "hello"
+    {op, data} := WsTestClient recvFrame: client
+    self assert: op equals: #text
+    self assert: (data asStringUnchecked) equals: "hello"
+    WsTestClient sendClose: client
+    {op2, _} := WsTestClient recvFrame: client
+    self assert: op2 equals: #close
+    (Erlang gen_tcp) close: client
+
+  testBinaryEcho =>
+    client := self shake: (self startWith: WsEchoHandler)
+    WsTestClient sendBinary: client data: (Binary fromBytes: #(1, 2, 3))
+    {op, data} := WsTestClient recvFrame: client
+    self assert: op equals: #binary
+    self assert: data equals: (Binary fromBytes: #(1, 2, 3))
+    WsTestClient sendClose: client
+    {op2, _} := WsTestClient recvFrame: client
+    self assert: op2 equals: #close
+    (Erlang gen_tcp) close: client
+
+  testActorPattern =>
+    client := self shake: (self startWith: WsActorHandler)
+    WsTestClient sendText: client data: "hi"
+    {op, data} := WsTestClient recvFrame: client
+    self assert: op equals: #text
+    self assert: (data asStringUnchecked) equals: "hi"
+    WsTestClient sendClose: client
+    {op2, _} := WsTestClient recvFrame: client
+    self assert: op2 equals: #close
+    (Erlang gen_tcp) close: client
+
+  testCloseRecorded =>
+    client := self shake: (self startWith: WsEchoHandler)
+    WsTestClient sendClose: client
+    {op, _} := WsTestClient recvFrame: client
+    self assert: op equals: #close
+    (Erlang gen_tcp) close: client
+    self assert: self awaitCloseEvent equals: #remote

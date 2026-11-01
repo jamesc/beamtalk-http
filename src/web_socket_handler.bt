@@ -1,0 +1,48 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// WebSocketHandler — protocol for Value handlers that serve one
+/// WebSocket connection on the buccaneer backend.
+///
+/// Answer `HTTPResponse upgradeWebSocket: HandlerClass` from a block,
+/// router or `HTTPHandler` actor and the adapter runs the connection
+/// through the handler class. The handler is a Value and its own
+/// state: `onOpen:request:` (sent to the class) answers the first
+/// state, and each data callback answers the next state. Frames go
+/// out through the `WebSocketHandle` (`sendText:`, `sendBinary:`,
+/// `close:`), which the handler may keep in a field.
+///
+/// A handler that wants an actor forwards to one itself: create or
+/// look up the actor in `onOpen:`, keep it in a field, and cast each
+/// message to it. The actor pushes back by sending a message to the
+/// connection process (`ws pid`), which arrives in `onInfo:`. The
+/// actor never touches `ws`, which raises `#not_owner` outside the
+/// connection process.
+///
+/// ## Examples
+/// ```beamtalk
+/// sealed Value subclass: EchoHandler
+///   class onOpen: ws :: WebSocketHandle request: req :: HTTPRequest -> EchoHandler =>
+///     self new
+///
+///   onText: text :: String ws: ws :: WebSocketHandle -> EchoHandler =>
+///     ws sendText: text
+///     self
+///
+///   onClose: reason :: Object -> Object => nil
+/// ```
+Protocol define: WebSocketHandler
+  /// Create the first handler state for a new connection. Sent to the
+  /// handler class with a handle owned by the connection process and
+  /// the upgrade's `HTTPRequest`.
+  onOpen: ws :: WebSocketHandle request: req :: HTTPRequest -> Object
+  /// A text frame. Answers the next handler state.
+  onText: text :: String ws: ws :: WebSocketHandle -> Object
+  /// A binary frame. Answers the next handler state.
+  onBinary: data :: Binary ws: ws :: WebSocketHandle -> Object
+  /// Any other message to the connection process (optional). Answers
+  /// the next handler state.
+  onInfo: message :: Object ws: ws :: WebSocketHandle -> Object
+  /// The connection is ending (optional). Answers anything; the
+  /// engine ignores it.
+  onClose: reason :: Object -> Object

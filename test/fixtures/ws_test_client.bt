@@ -1,0 +1,101 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// Minimal raw-socket WebSocket client for upgrade tests: a masked
+/// handshake, masked text/binary/close sends, and single-frame
+/// receives. Payloads must stay under 126 bytes; the engine suite
+/// covers larger frames.
+Object subclass: WsTestClient
+
+  /// Open a raw TCP connection to `port` on localhost.
+  class connect: port :: Integer -> Object =>
+    ((Erlang gen_tcp)
+      connect: {127, 0, 0, 1}
+      with: port
+      with: #(#binary, {#packet, #raw}, {#active, #false})) unwrap
+
+  /// Run the opening handshake for `path`. Answers the response head;
+  /// the test asserts the 101 on it.
+  class handshake: sock :: Object path: path :: String -> String =>
+    (Erlang gen_tcp)
+      send: sock
+      with: ("GET "
+        ++ path
+        ++ " HTTP/1.1\r\nhost: localhost\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==\r\nsec-websocket-version: 13\r\n\r\n")
+    head := ""
+    [(head includesSubstring: "\r\n\r\n") not]
+      whileTrue: [
+        head := head
+          concat: (((Erlang gen_tcp)
+            recv: sock
+            with: 1
+            with: 5000) unwrap)
+      ]
+    head
+
+  /// Send a masked text frame. Answers nil.
+  class sendText: sock :: Object data: text :: String =>
+    (Erlang gen_tcp) send: sock with: (self maskedFrame: 1 data: (Binary fromIolist: #(text)))
+
+  /// Send a masked binary frame. Answers nil.
+  class sendBinary: sock :: Object data: data :: Binary =>
+    (Erlang gen_tcp) send: sock with: (self maskedFrame: 2 data: data)
+
+  /// Send a masked empty close frame. Answers nil.
+  class sendClose: sock :: Object =>
+    (Erlang gen_tcp) send: sock with: (self maskedFrame: 8 data: (Binary fromBytes: #()))
+
+  /// One masked client frame for `opcode` over `data`, with a fixed
+  /// mask through the engine's own masking.
+  class maskedFrame: opcode :: Integer data: data :: Binary -> Binary =>
+    mask := Binary fromBytes: #(1, 2, 3, 4)
+    masked := WebSocketOps mask: data with: mask
+    len := data size
+    len > 125 ifTrue: [
+      Error signal: "WsTestClient only sends frames under 126 bytes"
+    ]
+    Binary fromIolist: #((Binary fromBytes: #((128 + opcode), (128 + len))), mask, masked)
+
+  /// Read one server frame. Answers `{opcode, data}` with `#text`,
+  /// `#binary`, `#close`, `#ping` or `#pong`.
+  class recvFrame: sock :: Object -> Tuple =>
+    head := ((Erlang gen_tcp)
+      recv: sock
+      with: 2
+      with: 5000) unwrap
+    opcode := (head byteAt: 0) bitAnd: 15
+    len := (head byteAt: 1) bitAnd: 127
+    len =:= 126
+      ifTrue: [
+        ext := ((Erlang gen_tcp)
+          recv: sock
+          with: 2
+          with: 5000) unwrap
+        len := (ext byteAt: 0) * 256 + (ext byteAt: 1)
+      ]
+    len =:= 127 ifTrue: [
+      Error signal: "WsTestClient only receives frames under 65536 bytes"
+    ]
+    data := len =:= 0
+      ifTrue: [Binary fromBytes: #()]
+      ifFalse: [
+        ((Erlang gen_tcp)
+          recv: sock
+          with: len
+          with: 5000) unwrap
+      ]
+    {self opcodeName: opcode, data}
+
+  class opcodeName: opcode :: Integer -> Symbol =>
+    opcode match: [
+      1 -> #text;
+      2 -> #binary;
+      8 -> #close;
+      9 -> #ping;
+      10 -> #pong;
+      _ -> Error signal: "unknown opcode in test frame"
+    ]
+
+  /// The close code carried by a close frame body.
+  class closeCode: data :: Binary -> Integer =>
+    (data byteAt: 0) * 256 + (data byteAt: 1)

@@ -11,7 +11,7 @@ Provides the canonical Dialyzer-visible type `t()` for HTTPResponse value
 objects returned by `beamtalk_http`. The runtime map structure is produced
 by the Beamtalk compiler from `field:` declarations in `src/httpresponse.bt`
 and constructed by the generated HTTPResponse keyword constructor
-`class_status:headers:body:stream:file:fileOffset:fileLength:/8`.
+`class_status:headers:body:stream:file:fileOffset:fileLength:websocketHandler:/9`.
 
 This module is a type-only companion to `beamtalk_http` — it exports no
 functions. The generated HTTPResponse module is excluded from the Dialyzer PLT
@@ -33,6 +33,7 @@ Fields mirror the `field:` declarations in `src/httpresponse.bt`:
   field: file       = nil
   field: fileOffset :: Integer = 0
   field: fileLength = #all
+  field: websocketHandler = nil
 
 BT-4173: headers/body answer Strings when the wire bytes are valid
 UTF-8, and stay bare Binaries otherwise (non-text payloads).
@@ -45,5 +46,6 @@ UTF-8, and stay bare Binaries otherwise (non-text payloads).
     'stream' := fun() | nil,
     'file' := binary() | beamtalk_string:t() | nil,
     'fileOffset' := integer(),
-    'fileLength' := integer() | all
+    'fileLength' := integer() | all,
+    'websocketHandler' := nil | term()
 }.

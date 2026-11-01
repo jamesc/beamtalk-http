@@ -289,9 +289,16 @@ call_handler(Handler, Request) when is_pid(Handler) ->
 -spec make_error_response(integer(), binary()) -> beamtalk_http_response:t().
 make_error_response(Status, Body) ->
     %% BT-4083: plain value — no stream, no file.
-    ?BT_CLASS_MODULE_HTTPResponse:'class_status:headers:body:stream:file:fileOffset:fileLength:'(
-        undefined, Status, [[<<"content-type">>, <<"text/plain">>]], Body,
-        nil, nil, 0, all
+    ?BT_CLASS_MODULE_HTTPResponse:'class_status:headers:body:stream:file:fileOffset:fileLength:websocketHandler:'(
+        undefined,
+        Status,
+        [[<<"content-type">>, <<"text/plain">>]],
+        Body,
+        nil,
+        nil,
+        0,
+        all,
+        nil
     ).
 
 %% @private Extract a field from an HTTPResponse value object.

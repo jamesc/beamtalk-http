@@ -1,0 +1,20 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// Test actor for the WebSocket actor pattern: handlers join the
+/// connection pid and the room relays posts back to it. Written for
+/// shared rooms, so leaving never stops the room.
+Actor subclass: WsRoomActor
+  state: members :: List = #()
+
+  join: pid :: Pid -> Symbol =>
+    self.members := self.members add: pid
+    #ok
+
+  post: text :: String -> Symbol =>
+    self.members do: [:m | m send: {#roomCast, text}]
+    #ok
+
+  leave: pid :: Pid -> Symbol =>
+    self.members := self.members reject: [:m | m =:= pid]
+    #ok

@@ -1,0 +1,33 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// Test `WebSocketHandler` for the actor pattern: `onOpen:` spawns a
+/// room and joins the connection pid, `onText:` casts each text to
+/// the room, and `onInfo:` writes room relays back through the
+/// handle. The handler never hands `ws` to the actor — only the pid
+/// — so nothing outside the connection process touches the handle.
+sealed typed Value subclass: WsActorHandler
+  field: room :: Object = nil
+  field: wspid :: Object = nil
+
+  class onOpen: ws :: WebSocketHandle request: _req :: HTTPRequest -> WsActorHandler =>
+    room := WsRoomActor spawn
+    room join: ws pid!
+    (self new withRoom: room) withWspid: ws pid
+
+  onText: text :: String ws: _ws :: WebSocketHandle -> WsActorHandler =>
+    self room post: text!
+    self
+
+  onBinary: _data :: Binary ws: _ws :: WebSocketHandle -> WsActorHandler => self
+
+  onInfo: message :: Object ws: ws :: WebSocketHandle -> WsActorHandler =>
+    message match: [
+      {#roomCast, text} -> ws sendText: (text asStringUnchecked);
+      _ -> nil
+    ]
+    self
+
+  onClose: reason :: Object -> Object =>
+    self room leave: self wspid!
+    {#closed, reason}

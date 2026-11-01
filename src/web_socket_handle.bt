@@ -1,0 +1,58 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// WebSocketHandle — a handler's line to its own connection process.
+///
+/// Created by the adapter in `init`, so the bound pid is always the
+/// connection process. `sendText:` / `sendBinary:` queue a frame for
+/// the connection to write after the current callback answers;
+/// `close:` / `close:` ask it to stop. `pid` is the connection
+/// process itself: an actor working for the handler sends its pushes
+/// there, and they arrive in the handler's `onInfo:`.
+///
+/// Only the connection process may use the handle. Any other process
+/// — an actor the handler kept it from, a test probe — raises an
+/// `Error` with reason `#not_owner`.
+///
+/// Messages to the connection start with the `sendTag` (`#wsSend`),
+/// which the adapter reserves: a handler must not send its own
+/// two-element tuples under that tag to `pid`.
+sealed typed Value subclass: WebSocketHandle
+  field: pid :: Pid | Nil = nil
+
+  /// Bind a handle to `pid` (the connection process).
+  class sealed for: pid :: Pid -> WebSocketHandle => self new withPid: pid
+
+  /// The tag of handle-to-connection messages (reserved).
+  class sealed sendTag -> Symbol => #wsSend
+
+  /// Queue a text frame. Answers the handle, so sends chain.
+  sendText: text :: String -> WebSocketHandle =>
+    self ownerCheck
+    self pid send: {WebSocketHandle sendTag, {#text, text}}
+    self
+
+  /// Queue a binary frame. Answers the handle, so sends chain.
+  sendBinary: data :: Binary -> WebSocketHandle =>
+    self ownerCheck
+    self pid send: {WebSocketHandle sendTag, {#binary, data}}
+    self
+
+  /// Ask the connection to stop normally. Answers the handle.
+  close -> WebSocketHandle =>
+    self ownerCheck
+    self pid send: {WebSocketHandle sendTag, #close}
+    self
+
+  /// Ask the connection to stop with `code`. Answers the handle.
+  close: code :: Integer -> WebSocketHandle =>
+    self ownerCheck
+    self pid send: {WebSocketHandle sendTag, {#close, code}}
+    self
+
+  ownerCheck -> WebSocketHandle =>
+    Pid current =:= self pid
+      ifFalse: [
+        Error signal: "WebSocketHandle used outside its connection process" reason: #not_owner
+      ]
+    self

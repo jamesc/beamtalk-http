@@ -7,7 +7,7 @@ version = "0.2.0"
 description = "HTTP client and server for Beamtalk"
 
 [dependencies]
-buccaneer = { git = "https://github.com/jamesc/beamtalk-buccaneer", rev = "0287735df28f883b3e040ad69c333e915f93c807" }
+buccaneer = { path = "../beamtalk-buccaneer" }
 
 [native.dependencies]
 # gun 2.2.0 has a bug: calls cow_http2_machine:is_remote_concurrency_limit_reached/1
