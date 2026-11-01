@@ -41,3 +41,6 @@ jobs:
 
       - name: Test
         run: just test
+
+      - name: Test (buccaneer backend)
+        run: BEAMTALK_HTTP_BACKEND=buccaneer beamtalk test --warnings-as-errors

@@ -17,14 +17,24 @@ Object subclass: HttpExchangeAdapter
 
   /// Serve one request: build the `HTTPRequest`, dispatch, send the
   /// `HTTPResponse`. Answers 400 for a request the handler must never
-  /// see (non-UTF-8 header value or query part), 413 for an over-large
-  /// body, and 500 for anything else — a raise in the handler or a
-  /// non-`HTTPResponse` answer included, as the cowboy backend does.
-  /// The engine sends 100-continue and HEAD/204/304 framing itself.
+  /// see (non-UTF-8 header value or query part, malformed body framing),
+  /// 413 for an over-large body, and 500 for anything else — a raise in
+  /// the handler or a non-`HTTPResponse` answer included, as the cowboy
+  /// backend does. The engine strips HEAD/204/304 bodies itself; it
+  /// sends no interim 100-continue (engine Phase 3), so a client that
+  /// waits for one hits the read timeout instead.
+  ///
+  /// Engine errors pass through untouched: `TransportError` (dead
+  /// socket) and `HTTPError` (protocol problems the pipeline maps to a
+  /// status itself) must reach the engine's own error paths, not the
+  /// 500 below.
   class serve: ex :: Exchange handler: handler -> Object =>
     [self respond: ex handler: handler]
       on: Exception
       do: [:e |
+        ((e isKindOf: TransportError) or: [
+          e isKindOf: HTTPError
+        ]) ifTrue: [e pass]
         Logger error: ("HTTP handler failed: " ++ e printString) metadata: #{
           #domain => #(#http)
         }
@@ -119,12 +129,24 @@ Object subclass: HttpExchangeAdapter
 
   /// The whole body, as the cowboy backend reads it before dispatch: a
   /// String when valid UTF-8, a Binary otherwise. Answers nil after
-  /// sending 413 for an over-large body; other read failures raise.
+  /// sending 400 (malformed framing — the engine raises `HTTPError`
+  /// for those, documented there as "a 400") or 413 (over-large body).
+  /// A dead socket signals `TransportError` so the engine takes its
+  /// quiet transport-error path instead of a 500; anything else raises.
   class readBody: ex :: Exchange -> String | Binary | Nil =>
-    read := ex readAll: self maxBodyBytes
+    read := [ex readAll: self maxBodyBytes]
+      on: HTTPError
+      do: [:e |
+        self send400: ex reason: "malformed request body"
+        nil
+      ]
+    read isNil ifTrue: [^nil]
     read isError
       ifTrue: [
         read error =:= #body_too_large ifTrue: [^self send413: ex]
+        read error =:= #closed ifTrue: [
+          TransportError signal: "client closed connection during body read"
+        ]
         Error signal: ("Request body read failed: " ++ read error printString)
       ]
     data := read value
@@ -138,13 +160,16 @@ Object subclass: HttpExchangeAdapter
     headers collect: [:pair | {(pair at: 1), (pair at: 2)}]
 
   /// Raw query string to parameters, with cowboy's rules: `?flag`
-  /// means `"true"`, `+` is a space, `%XX` decodes a byte. Answers nil
-  /// when a part is not valid UTF-8.
+  /// means `"true"`, `+` is a space, `%XX` decodes a byte, and empty
+  /// segments (a trailing or doubled `&`) are skipped. Answers nil
+  /// when a part is not valid UTF-8 — the cowboy backend crashes on
+  /// those (a 500), so a 400 here is the deliberate friendlier shape.
   class parseQuery: query :: String | Nil -> Dictionary(String, String) | Nil =>
     query isNil ifTrue: [^#{}]
     query =:= "" ifTrue: [^#{}]
     out := Dictionary new
-    (query split: "&")
+    parts := (query split: "&") reject: [:part | part isEmpty]
+    parts
       do: [:part |
         idx := part indexOf: "="
         key := self decodeQueryPart: (idx isNil ifTrue: [

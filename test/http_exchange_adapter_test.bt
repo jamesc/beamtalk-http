@@ -122,6 +122,56 @@ TestCase subclass: HttpExchangeAdapterTest
     resp := (HTTPClient get: self baseUrl ++ "/?name=%41%42+%43") unwrap
     self assert: resp body equals: "AB C"
 
+  testLowercaseHexQueryParam =>
+    self.srv := self
+      startBuccaneer: [:req |
+        HTTPResponse new: #{#status => 200, #body => req queryParams at: "name"}
+      ]
+    resp := (HTTPClient get: self baseUrl ++ "/?name=%2f%41") unwrap
+    self assert: resp body equals: "/A"
+
+  testMalformedQueryBecomes400 =>
+    self.srv := self startBuccaneer: [:req |
+      HTTPResponse new: #{#status => 200, #body => "unreached"}
+    ]
+    badHex := (HTTPClient get: self baseUrl ++ "/?name=%zz") unwrap
+    self assert: badHex status equals: 400
+    trailing := (HTTPClient get: self baseUrl ++ "/?name=%") unwrap
+    self assert: trailing status equals: 400
+
+  testEmptyQuerySegmentsSkipped =>
+    self.srv := self
+      startBuccaneer: [:req |
+        HTTPResponse
+          new: #{#status => 200, #body => (req queryParams at: "a")
+              ++ ","
+              ++ (req queryParams at: "b")
+              ++ ","
+              ++ (req queryParams at: "" ifAbsent: ["absent"])}
+      ]
+    resp := (HTTPClient get: self baseUrl ++ "/?a=1&&b=2&") unwrap
+    self assert: resp body equals: "1,2,absent"
+
+  testMalformedChunkedBodyBecomes400 =>
+    self.srv := self startBuccaneer: [:req |
+      HTTPResponse new: #{#status => 200, #body => "unreached"}
+    ]
+    raw := self
+      rawPost: self.srv port
+      path: "/bad"
+      headers: "transfer-encoding: chunked\r\n"
+      body: "ZZZ\r\nhello\r\n0\r\n\r\n"
+    self assert: (raw includesSubstring: "400")
+
+  testBodyLimitBoundary =>
+    self.srv := self startBuccaneer: [:req |
+      HTTPResponse new: #{#status => 200, #body => "got it"}
+    ]
+    exact := (HTTPClient post: self baseUrl ++ "/" body: ("x" repeat: 8000000)) unwrap
+    self assert: exact status equals: 200
+    over := (HTTPClient post: self baseUrl ++ "/" body: ("x" repeat: 8000001)) unwrap
+    self assert: over status equals: 413
+
   testNonUtf8BodyStaysBinary =>
     self.srv := self
       startBuccaneer: [:req |
@@ -212,6 +262,66 @@ TestCase subclass: HttpExchangeAdapterTest
           options: #{#backend => #buccaneer, #bind => "not-an-ip"}
       ]
     self assert: outcome isError
+
+  testInvalidHandlerRaises =>
+    garbage := Result tryDo: [self startBuccaneer: "oops"]
+    self assert: garbage isError
+    nilHandler := Result tryDo: [self startBuccaneer: nil]
+    self assert: nilHandler isError
+
+  testResolveBackendMatrix =>
+    orig := System getEnv: "BEAMTALK_HTTP_BACKEND"
+    System setEnv: "BEAMTALK_HTTP_BACKEND" value: "buccaneer"
+    fromEnv := HTTPServer resolveBackend: #{}
+    System setEnv: "BEAMTALK_HTTP_BACKEND" value: "bogus"
+    bogusOutcome := Result tryDo: [HTTPServer resolveBackend: #{}]
+    System setEnv: "BEAMTALK_HTTP_BACKEND" value: ""
+    emptyEnv := HTTPServer resolveBackend: #{}
+    System setEnv: "BEAMTALK_HTTP_BACKEND" value: (orig isNil ifTrue: [
+      ""
+    ] ifFalse: [orig])
+    self assert: fromEnv equals: #buccaneer
+    self assert: bogusOutcome isError
+    self assert: emptyEnv equals: #cowboy
+    self assert: (HTTPServer resolveBackend: #{
+      #backend => #cowboy
+    }) equals: #cowboy
+    self
+      assert: (HTTPServer resolveBackend: #{})
+      equals: (orig isNil ifTrue: [
+        #cowboy
+      ] ifFalse: [orig =:= "buccaneer" ifTrue: [#buccaneer] ifFalse: [#cowboy]])
+
+  testNibbleBounds =>
+    self assert: (HttpExchangeAdapter nibble: "0") equals: 0
+    self assert: (HttpExchangeAdapter nibble: "9") equals: 9
+    self assert: (HttpExchangeAdapter nibble: "a") equals: 10
+    self assert: (HttpExchangeAdapter nibble: "f") equals: 15
+    self assert: (HttpExchangeAdapter nibble: "A") equals: 10
+    self assert: (HttpExchangeAdapter nibble: "F") equals: 15
+    self assert: (HttpExchangeAdapter nibble: "g") isNil
+
+  testParseQueryDirect =>
+    q := HttpExchangeAdapter parseQuery: "a=1&b=&flag"
+    self assert: (q at: "a") equals: "1"
+    self assert: (q at: "b") equals: ""
+    self assert: (q at: "flag") equals: "true"
+    self assert: (HttpExchangeAdapter parseQuery: "") equals: #{}
+    self assert: (HttpExchangeAdapter parseQuery: nil) equals: #{}
+
+  testClientDisconnectKeepsServing =>
+    self.srv := self startBuccaneer: [:req |
+      HTTPResponse new: #{#status => 200, #body => "alive"}
+    ]
+    port := self.srv port
+    client := ((Erlang gen_tcp)
+      connect: {127, 0, 0, 1}
+      with: port
+      with: #(#binary, {#packet, #raw}, {#active, #false})) unwrap
+    (Erlang gen_tcp) send: client with: "POST /gone HTTP/1.1\r\nhost: x\r\ncontent-length: 100\r\nconnection: close\r\n\r\npartial"
+    (Erlang gen_tcp) close: client
+    resp := (HTTPClient get: self baseUrl ++ "/") unwrap
+    self assert: resp body equals: "alive"
 
   rawPost: port path: path headers: headerLines body: body =>
     client := ((Erlang gen_tcp)

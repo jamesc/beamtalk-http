@@ -20,6 +20,12 @@ Actor subclass: HTTPBuccaneerServer
 
   initialize =>
     h := self.handler
+    ((h isKindOf: Block) or: [
+      (h isKindOf: HTTPRouter) or: [h respondsTo: #handle:]
+    ])
+      ifFalse: [
+        Error signal: "Invalid HTTP handler; expected a block, HTTPRouter or handle: actor"
+      ]
     srv := (Buccaneer
       start: #{
         #port => self.port,
@@ -38,6 +44,10 @@ Actor subclass: HTTPBuccaneerServer
   printString -> String =>
     "an HTTPServer(port: " ++ self.actualPort asString ++ ")"
 
+  /// Guarded like the native backend's catch-all stop: the engine may
+  /// already be gone (crash, OOM-killer), and shutdown must not raise.
   terminate: _reason :: Object -> Nil =>
-    self.server isNil ifFalse: [self.server stop: 5000]
+    self.server isNil ifFalse: [
+      [self.server stop: 5000] on: Exception do: [:e | nil]
+    ]
     nil
