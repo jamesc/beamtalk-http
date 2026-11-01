@@ -26,15 +26,27 @@ Actor subclass: HTTPBuccaneerServer
       ifFalse: [
         Error signal: "Invalid HTTP handler; expected a block, HTTPRouter or handle: actor"
       ]
+    bound := HttpExchangeAdapter parseBind: self.bind
     srv := (Buccaneer
       start: #{
         #port => self.port,
-        #ip => (HttpExchangeAdapter parseBindIp: self.bind),
+        #ip => (bound at: 1),
+        #inet6 => (bound at: 2),
         #startupLog => false,
         #handler => [:ex | HttpExchangeAdapter serve: ex handler: h]
       }) unwrap
     self.server := srv
-    self.actualPort := (srv listenerInfo unwrap) at: 2
+    info := srv listenerInfo unwrap
+    ((info isKindOf: Tuple) and: [info size =:= 2])
+      ifFalse: [
+        Error signal: "Buccaneer listenerInfo changed shape; update HTTPBuccaneerServer>>initialize"
+      ]
+    port := info at: 2
+    (port isKindOf: Integer)
+      ifFalse: [
+        Error signal: "Buccaneer listenerInfo port is not an Integer; update HTTPBuccaneerServer>>initialize"
+      ]
+    self.actualPort := port
     nil
 
   /// The bound port (ephemeral when started with port 0), like

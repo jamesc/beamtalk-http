@@ -100,7 +100,7 @@ Actor subclass: HTTPServer native: beamtalk_http_server
   ///
   /// Options:
   ///   - `#bind` — IP address to bind to (default `"127.0.0.1"`;
-  ///     IPv4 only on `#buccaneer`)
+  ///     v4 dotted quads and IPv6 (with `::` compression) on both backends)
   ///   - `#backend` — `#cowboy` (default) or `#buccaneer`. When absent,
   ///     the `BEAMTALK_HTTP_BACKEND` environment variable selects the
   ///     backend (`"cowboy"` / `"buccaneer"`); unset (or empty) means

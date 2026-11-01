@@ -34,19 +34,25 @@ Object subclass: QueryParser
       ]
     out
 
-  class decodePart: s :: String -> String | Nil => self decodePart: s into: ""
+  class decodePart: s :: String -> String | Nil =>
+    pieces := self decodePieces: s into: #()
+    pieces isNil ifTrue: [^nil]
+    String withAll: pieces
 
-  class decodePart: rest :: String into: out :: String -> String | Nil =>
-    rest isEmpty ifTrue: [^out]
-    ch := rest at: 1
-    ch =:= "+" ifTrue: [^self decodePart: (rest drop: 1) into: out ++ " "]
-    ch =:= "%" ifFalse: [^self decodePart: (rest drop: 1) into: out ++ ch]
-    run := self percentRun: rest into: #()
+  /// Literal head runs plus one decoded `%`-run per piece, joined once
+  /// at the end. Jumping run-to-run keeps this linear in the input —
+  /// the old per-character walk copied the output on every char
+  /// (quadratic) with stack depth to match.
+  class decodePieces: rest :: String into: pieces :: List(String) -> List(String) | Nil =>
+    idx := rest indexOf: "%"
+    idx isNil ifTrue: [^pieces add: (rest replaceAll: "+" with: " ")]
+    head := (rest take: idx - 1) replaceAll: "+" with: " "
+    run := self percentRun: (rest drop: idx - 1) into: #()
     run isNil ifTrue: [^nil]
-    rest := run at: 2
+    tail := run at: 2
     decoded := (Binary fromBytes: (run at: 1)) asString
     decoded isError ifTrue: [^nil]
-    self decodePart: rest into: out ++ decoded value
+    self decodePieces: tail into: ((pieces add: head) add: decoded value)
 
   /// Consume all contiguous `%XX` groups at the head of `s`: answers
   /// `{bytes, rest}` or nil on a short or non-hex group.
