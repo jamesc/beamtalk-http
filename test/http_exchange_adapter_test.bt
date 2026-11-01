@@ -195,6 +195,13 @@ TestCase subclass: HttpExchangeAdapterTest
     resp := (HTTPClient get: self baseUrl ++ "/") unwrap
     self assert: resp status equals: 500
 
+  testBodyTooLargePrefixRaiseBecomes500 =>
+    self.srv := self startBuccaneer: [:req |
+      Error signal: "body_too_large: not really"
+    ]
+    resp := (HTTPClient get: self baseUrl ++ "/") unwrap
+    self assert: resp status equals: 500
+
   testNonResponseBecomes500 =>
     self.srv := self startBuccaneer: [:req |
       (req path =:= "/nil") ifTrue: [nil] ifFalse: ["nope"]
@@ -378,6 +385,366 @@ TestCase subclass: HttpExchangeAdapterTest
     (Erlang gen_tcp) close: client
     resp := (HTTPClient get: self baseUrl ++ "/") unwrap
     self assert: resp body equals: "alive"
+
+  testStreamValueCarriesBlock =>
+    r := HTTPResponse streamWith: [:resp | resp finish]
+    self assert: r stream notNil
+    self assert: r file isNil
+
+  testFileValues =>
+    whole := (HTTPResponse file: "test/fixtures/stream_file") withStatus: 200
+    self assert: whole status equals: 200
+    self assert: whole fileOffset equals: 0
+    self assert: whole fileLength equals: #all
+    part := HTTPResponse
+      file: "test/fixtures/stream_file"
+      offset: 4
+      length: 6
+    self assert: part file equals: "test/fixtures/stream_file"
+    self assert: part fileOffset equals: 4
+    self assert: part fileLength equals: 6
+
+  testReadChunkWithoutExchangeIsNotSupported =>
+    req := HTTPRequest new: #{#method => "GET", #path => "/"}
+    self assert: req readChunk equals: (Result error: #not_supported)
+    self assert: (req inform: 103 headers: #()) equals: (Result error: #not_supported)
+    self assert: req body equals: ""
+
+  testStreamWithBlock =>
+    self.srv := self
+      startBuccaneer: [:req |
+        HTTPResponse
+          streamWith: [:resp |
+            resp startChunked: 200 headers: #(#("content-type", "text/plain"))
+            (resp sendChunk: "part1") unwrap
+            (resp sendChunk: "part2") unwrap
+            resp finish
+          ]
+      ]
+    resp := (HTTPClient get: self baseUrl ++ "/stream") unwrap
+    self assert: resp status equals: 200
+    self assert: resp body equals: "part1part2"
+
+  testStreamWithRouter =>
+    router := HTTPRouter
+      routes: #(HTTPRoute
+        get: "/s"
+        handler: [:req |
+          HTTPResponse
+            streamWith: [:resp |
+              resp startChunked: 200 headers: #()
+              (resp sendChunk: "routed") unwrap
+              resp finish
+            ]
+        ])
+    self.srv := self startBuccaneer: router
+    resp := (HTTPClient get: self baseUrl ++ "/s") unwrap
+    self assert: resp body equals: "routed"
+
+  testStreamWithActorPullsChunks =>
+    self.srv := self startBuccaneer: (ChunkFeed spawnWith: #{
+      #rows => #("r1", "r2", "r3")
+    })
+    resp := (HTTPClient get: self baseUrl ++ "/feed") unwrap
+    self assert: resp status equals: 200
+    self assert: resp body equals: "r1r2r3"
+
+  testStreamUnfinishedIsFinishedByAdapter =>
+    self.srv := self
+      startBuccaneer: [:req |
+        HTTPResponse
+          streamWith: [:resp |
+            resp startChunked: 200 headers: #()
+            (resp sendChunk: "half") unwrap
+            "no-finish"
+          ]
+      ]
+    resp := (HTTPClient get: self baseUrl ++ "/half") unwrap
+    self assert: resp status equals: 200
+    self assert: resp body equals: "half"
+
+  testStreamUnstartedBecomes500 =>
+    self.srv := self startBuccaneer: [:req |
+      HTTPResponse streamWith: [:resp | "never-started"]
+    ]
+    resp := (HTTPClient get: self baseUrl ++ "/unstarted") unwrap
+    self assert: resp status equals: 500
+
+  testStreamDoubleStartCloses =>
+    self.srv := self
+      startBuccaneer: [:req |
+        HTTPResponse
+          streamWith: [:resp |
+            resp startChunked: 200 headers: #()
+            resp startChunked: 200 headers: #()
+            resp finish
+          ]
+      ]
+    raw := self rawGet: self.srv port path: "/double"
+    self assert: (raw startsWith: "HTTP/1.1 200")
+    self deny: (raw includesSubstring: "0\r\n\r\n")
+
+  testStreamChunkBeforeStartBecomes500 =>
+    self.srv := self
+      startBuccaneer: [:req |
+        HTTPResponse
+          streamWith: [:resp |
+            resp sendChunk: "early"
+            resp finish
+          ]
+      ]
+    resp := (HTTPClient get: self baseUrl ++ "/early") unwrap
+    self assert: resp status equals: 500
+
+  testFileMissingBecomes500 =>
+    self.srv := self startBuccaneer: [:req |
+      (HTTPResponse file: "test/fixtures/does-not-exist") withStatus: 200
+    ]
+    resp := (HTTPClient get: self baseUrl ++ "/missing-file") unwrap
+    self assert: resp status equals: 500
+
+  testStreamRaiseAfterHeadersCloses =>
+    self.srv := self
+      startBuccaneer: [:req |
+        HTTPResponse
+          streamWith: [:resp |
+            resp startChunked: 200 headers: #()
+            (resp sendChunk: "part") unwrap
+            Error signal: "boom-after-headers"
+            resp finish
+          ]
+      ]
+    raw := self rawGet: self.srv port path: "/boom"
+    self assert: (raw startsWith: "HTTP/1.1 200")
+    self deny: (raw includesSubstring: "0\r\n\r\n")
+
+  testReadChunkStreamsBody =>
+    self.srv := self
+      startBuccaneer: [:req |
+        total := 0
+        done := false
+        [done]
+          whileFalse: [
+            chunk := (req readChunk) unwrap
+            chunk isEmpty ifTrue: [
+              done := true
+            ] ifFalse: [total := total + chunk size]
+          ]
+        HTTPResponse new: #{#status => 200, #body => total printString}
+      ]
+    resp := (HTTPClient post: self baseUrl ++ "/chunks" body: "hello world") unwrap
+    self assert: resp body equals: "11"
+
+  testBodyReadsRestAfterReadChunk =>
+    self.srv := self
+      startBuccaneer: [:req |
+        first := (req readChunk) unwrap
+        rest := req body
+        HTTPResponse new: #{
+          #status => 200,
+          #body => (first size + rest size) printString
+        }
+      ]
+    big := "y" repeat: 9000000
+    resp := (HTTPClient post: self baseUrl ++ "/rest" body: big) unwrap
+    self assert: resp body equals: "9000000"
+
+  testBodyOverLimitReads413 =>
+    self.srv := self startBuccaneer: [:req |
+      HTTPResponse new: #{#status => 200, #body => req body}
+    ]
+    big := "z" repeat: 9000000
+    resp := (HTTPClient post: self baseUrl ++ "/big" body: big) unwrap
+    self assert: resp status equals: 413
+
+  testPlugPreservesExchangeForInform =>
+    inner := [:req |
+      outcome := req inform: 103 headers: #()
+      HTTPResponse new: #{
+        #status => 200,
+        #body => (outcome isOk ifTrue: ["live"] ifFalse: ["dead"])
+      }
+    ]
+    composed := PlugChain chain: #((TaggingPlug tag: "A")) handler: inner
+    self.srv := self startBuccaneer: composed
+    resp := (HTTPClient get: self baseUrl ++ "/") unwrap
+    self assert: resp status equals: 200
+    // The in-tag stays in the request body (this handler never reads it);
+    // "live" proves the exchange survived the plug, "[A-out]" the wrap.
+    self assert: resp body equals: "live[A-out]"
+
+  testReadChunkFromActorRaisesNotOwner =>
+    self.srv := self startBuccaneer: ReadChunkProbe spawn
+    resp := (HTTPClient get: self baseUrl ++ "/") unwrap
+    self assert: resp status equals: 200
+    self assert: (resp body asStringUnchecked startsWith: "caught:not_owner:")
+
+  testInformSends103 =>
+    self.srv := self
+      startBuccaneer: [:req |
+        outcome := req inform: 103 headers: #(#("link", "</app.css>; rel=preload"))
+        outcome isOk ifFalse: [Error signal: "inform failed"]
+        HTTPResponse new: #{#status => 200, #body => "final"}
+      ]
+    raw := self rawGet: self.srv port path: "/early"
+    self assert: (raw includesSubstring: "HTTP/1.1 103")
+    self assert: (raw includesSubstring: "link: </app.css>")
+    self assert: (raw includesSubstring: "200 OK")
+    self assert: (raw endsWith: "final")
+
+  testInformRefusedOnHttp10 =>
+    self.srv := self
+      startBuccaneer: [:req |
+        outcome := req inform: 103 headers: #()
+        HTTPResponse
+          new: #{
+            #status => 200,
+            #body => ((outcome error =:= #not_supported) ifTrue: [
+              "unsupported"
+            ] ifFalse: ["other"])
+          }
+      ]
+    raw := self rawHttp10: self.srv port path: "/"
+    self assert: (raw includesSubstring: "unsupported")
+
+  testFileWhole =>
+    self.srv := self
+      startBuccaneer: [:req |
+        ((HTTPResponse file: "test/fixtures/stream_file") withStatus: 200) withHeaders: #(#("content-type", "text/plain"))
+      ]
+    resp := (HTTPClient get: self baseUrl ++ "/file") unwrap
+    self assert: resp status equals: 200
+    self assert: resp body equals: "0123456789abcdef"
+
+  testFileOffsetLength =>
+    self.srv := self
+      startBuccaneer: [:req |
+        ((HTTPResponse
+          file: "test/fixtures/stream_file"
+          offset: 4
+          length: 6) withStatus: 200) withHeaders: #(#("content-type", "text/plain"))
+      ]
+    resp := (HTTPClient get: self baseUrl ++ "/part") unwrap
+    self assert: resp body equals: "456789"
+
+  testFileFromActor =>
+    self.srv := self startBuccaneer: FileActor spawn
+    resp := (HTTPClient get: self baseUrl ++ "/actor-file") unwrap
+    self assert: resp status equals: 200
+    self assert: resp body equals: "0123456789abcdef"
+
+  testUploadOneGibStreamsInBoundedMemory =>
+    self.srv := self
+      startBuccaneer: [:req |
+        total := 0
+        done := false
+        [done]
+          whileFalse: [
+            chunk := (req readChunk) unwrap
+            chunk isEmpty ifTrue: [
+              done := true
+            ] ifFalse: [total := total + chunk size]
+          ]
+        HTTPResponse new: #{#status => 200, #body => total printString}
+      ]
+    port := self.srv port
+    client := ((Erlang gen_tcp)
+      connect: {127, 0, 0, 1}
+      with: port
+      with: #(#binary, {#packet, #raw}, {#active, #false})) unwrap
+    (Erlang gen_tcp) send: client with: "POST /upload HTTP/1.1\r\nhost: x\r\ncontent-length: 1073741824\r\nconnection: close\r\n\r\n"
+    piece := "x" repeat: 1048576
+    i := 0
+    [i < 1024]
+      whileTrue: [
+        ((Erlang gen_tcp) send: client with: piece) unwrap
+        i := i + 1
+      ]
+    raw := self recvAll: client
+    (Erlang gen_tcp) close: client
+    self assert: (raw includesSubstring: "200 OK")
+    self assert: (raw includesSubstring: "1073741824")
+
+  testDownloadOneGibStreamsInBoundedMemory =>
+    self.srv := self
+      startBuccaneer: [:req |
+        HTTPResponse
+          streamWith: [:resp |
+            resp startChunked: 200 headers: #(#("content-length", "1073741824"))
+            i := 0
+            piece := "a" repeat: 1048576
+            [i < 1024]
+              whileTrue: [
+                (resp sendChunk: piece) unwrap
+                i := i + 1
+              ]
+            resp finish
+          ]
+      ]
+    port := self.srv port
+    client := ((Erlang gen_tcp)
+      connect: {127, 0, 0, 1}
+      with: port
+      with: #(#binary, {#packet, #raw}, {#active, #false})) unwrap
+    (Erlang gen_tcp) send: client with: "GET /download HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n"
+    head := ""
+    [(head asStringUnchecked includesSubstring: "\r\n\r\n") not]
+      whileTrue: [
+        head := head
+          concat: (((Erlang gen_tcp)
+            recv: client
+            with: 1
+            with: 10000) unwrap)
+      ]
+    self assert: ((head asStringUnchecked) includesSubstring: "content-length: 1073741824")
+    total := 0
+    i := 0
+    [i < 1024]
+      whileTrue: [
+        got := ((Erlang gen_tcp)
+          recv: client
+          with: 1048576
+          with: 10000) unwrap
+        total := total + got size
+        i := i + 1
+      ]
+    (Erlang gen_tcp) close: client
+    self assert: total equals: 1073741824
+
+  rawGet: port path: path =>
+    client := ((Erlang gen_tcp)
+      connect: {127, 0, 0, 1}
+      with: port
+      with: #(#binary, {#packet, #raw}, {#active, #false})) unwrap
+    (Erlang gen_tcp) send: client with: "GET " ++ path ++ " HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n"
+    raw := self recvAll: client
+    (Erlang gen_tcp) close: client
+    raw
+
+  rawHttp10: port path: path =>
+    client := ((Erlang gen_tcp)
+      connect: {127, 0, 0, 1}
+      with: port
+      with: #(#binary, {#packet, #raw}, {#active, #false})) unwrap
+    (Erlang gen_tcp) send: client with: "GET " ++ path ++ " HTTP/1.0\r\nhost: x\r\nconnection: close\r\n\r\n"
+    raw := self recvAll: client
+    (Erlang gen_tcp) close: client
+    raw
+
+  recvAll: client =>
+    out := ""
+    done := false
+    [done]
+      whileFalse: [
+        got := (Erlang gen_tcp)
+          recv: client
+          with: 0
+          with: 5000
+        got isError ifTrue: [
+          done := true
+        ] ifFalse: [out := out concat: got value]
+      ]
+    out asStringUnchecked
 
   rawPost: port path: path headers: headerLines body: body =>
     client := ((Erlang gen_tcp)

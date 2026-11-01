@@ -1,0 +1,12 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// Test actor: calls `req readChunk` in the actor process (not the
+/// connection process) and reports the outcome, proving owner-bound
+/// handles raise `#not_owner` off-owner.
+Actor subclass: ReadChunkProbe
+
+  handle: req :: HTTPRequest -> HTTPResponse =>
+    text := [req readChunk] on: Error do: [:e | "caught:" ++ e message]
+    body := (text isKindOf: String) ifTrue: [text] ifFalse: ["no-raise"]
+    HTTPResponse new: #{#status => 200, #body => body}

@@ -28,17 +28,19 @@ HTTPS is enabled automatically when the URL scheme is `https`.
 ## Response Format
 
 All requests return an `HTTPResponse` value object constructed via the
-generated HTTPResponse keyword constructor `class_status:headers:body:/4`.
+generated HTTPResponse keyword constructor
+`class_status:headers:body:stream:file:fileOffset:fileLength:/8`.
 Fields: `status` (integer), `headers` (list of [Name, Value] binary pairs),
 `body` (String).
 
 ## Options map (for `request:url:options:`)
 
-| Key       | Type             | Default  | Description              |
-|-----------|------------------|----------|--------------------------|
-| `headers` | list of [K, V]   | `[]`     | Request headers          |
-| `body`    | binary           | `<<>>`   | Request body             |
-| `timeout` | integer (ms)     | `30000`  | Total request timeout    |
+| Key             | Type             | Default     | Description              |
+|-----------------|------------------|-------------|--------------------------|
+| `headers`       | list of [K, V]   | `[]`        | Request headers          |
+| `body`          | binary           | `<<>>`      | Request body             |
+| `timeout`       | integer (ms)     | `30000`     | Total request timeout    |
+| `maxBodyBytes`  | integer (bytes)  | `unlimited` | Cap on response body size|
 """.
 
 -export([dispatch/3, has_method/1]).
@@ -62,10 +64,13 @@ Fields: `status` (integer), `headers` (list of [Name, Value] binary pairs),
 %% These delegates expose the colon-style implementations under the
 %% expected no-colon names so `(Erlang beamtalk_http) get: url` works.
 -export([get/1, post/2, put/2, delete/1, request/3]).
+%% FFI shims for multi-keyword selectors (see below).
+-export([get/2, post/3, put/3, delete/2]).
 %% Exported for unit testing (beamtalk_http_tests)
 -export([
     normalise_method/1,
     validate_request_options/3,
+    validate_max_body_bytes/1,
     to_gun_headers/2,
     from_gun_headers/1,
     parse_url/1,
@@ -170,7 +175,7 @@ HTTP status codes (e.g. 404) are not errors — they are on the HTTPResponse.
     %% BT-4173: a String Url arrives tagged — unwrap for gun.
     'get:headers:'(Url, Headers);
 'get:headers:'(Url, Headers) when is_binary(Url), is_list(Headers) ->
-    do_request(<<"GET">>, Url, Headers, <<>>, ?DEFAULT_TIMEOUT, 'get:headers:');
+    do_request(<<"GET">>, Url, Headers, <<>>, ?DEFAULT_TIMEOUT, unlimited, 'get:headers:');
 'get:headers:'(_, Headers) when not is_list(Headers) ->
     type_error('get:headers:', <<"Headers must be a List">>);
 'get:headers:'(_, _) ->
@@ -193,7 +198,7 @@ HTTP status codes (e.g. 404) are not errors — they are on the HTTPResponse.
 ->
     'post:headers:body:'(Url, Headers, Body);
 'post:headers:body:'(Url, Headers, Body) when is_binary(Url), is_list(Headers), is_binary(Body) ->
-    do_request(<<"POST">>, Url, Headers, Body, ?DEFAULT_TIMEOUT, 'post:headers:body:');
+    do_request(<<"POST">>, Url, Headers, Body, ?DEFAULT_TIMEOUT, unlimited, 'post:headers:body:');
 'post:headers:body:'(Url, _, _) when not is_binary(Url) ->
     type_error('post:headers:body:', <<"Url must be a String">>);
 'post:headers:body:'(_, Headers, _) when not is_list(Headers) ->
@@ -218,7 +223,7 @@ HTTP status codes (e.g. 404) are not errors — they are on the HTTPResponse.
 ->
     'put:headers:body:'(Url, Headers, Body);
 'put:headers:body:'(Url, Headers, Body) when is_binary(Url), is_list(Headers), is_binary(Body) ->
-    do_request(<<"PUT">>, Url, Headers, Body, ?DEFAULT_TIMEOUT, 'put:headers:body:');
+    do_request(<<"PUT">>, Url, Headers, Body, ?DEFAULT_TIMEOUT, unlimited, 'put:headers:body:');
 'put:headers:body:'(Url, _, _) when not is_binary(Url) ->
     type_error('put:headers:body:', <<"Url must be a String">>);
 'put:headers:body:'(_, Headers, _) when not is_list(Headers) ->
@@ -238,7 +243,7 @@ HTTP status codes (e.g. 404) are not errors — they are on the HTTPResponse.
     %% BT-4173: a String Url arrives tagged — unwrap for gun.
     'delete:headers:'(Url, Headers);
 'delete:headers:'(Url, Headers) when is_binary(Url), is_list(Headers) ->
-    do_request(<<"DELETE">>, Url, Headers, <<>>, ?DEFAULT_TIMEOUT, 'delete:headers:');
+    do_request(<<"DELETE">>, Url, Headers, <<>>, ?DEFAULT_TIMEOUT, unlimited, 'delete:headers:');
 'delete:headers:'(_, Headers) when not is_list(Headers) ->
     type_error('delete:headers:', <<"Headers must be a List">>);
 'delete:headers:'(_, _) ->
@@ -260,7 +265,9 @@ Perform a generic HTTP request.
     Headers = maps:get(headers, Options, []),
     Body = maps:get(body, Options, <<>>),
     Timeout = maps:get(timeout, Options, ?DEFAULT_TIMEOUT),
+    MaxBodyBytes = maps:get(maxBodyBytes, Options, unlimited),
     validate_request_options(Headers, Body, Timeout),
+    validate_max_body_bytes(MaxBodyBytes),
     %% BT-4173: a String body arrives tagged — unwrap for gun.
     do_request(
         MethodBin,
@@ -268,6 +275,7 @@ Perform a generic HTTP request.
         Headers,
         beamtalk_http_text:unwrap_string(Body),
         Timeout,
+        MaxBodyBytes,
         'request:url:options:'
     );
 'request:url:options:'(_, Url, _) when not is_binary(Url) ->
@@ -306,6 +314,40 @@ Generic request delegate called by
 request(Method, Url, Options) -> 'request:url:options:'(Method, Url, Options).
 
 %%% ============================================================================
+%%% FFI shims for multi-keyword selectors
+%%%
+%%% The `(Erlang beamtalk_http)` FFI resolves a selector by first keyword and
+%%% arity (see beamtalk_erlang_proxy:selector_to_function/1), so a
+%%% multi-keyword selector needs a colon-free shim — the same "FFI Shims"
+%%% pattern beamtalk_file uses:
+%%%
+%%%   (Erlang beamtalk_http) get: url headers: h            → get/2
+%%%   (Erlang beamtalk_http) post: url headers: h body: b   → post/3
+%%%   (Erlang beamtalk_http) put: url headers: h body: b    → put/3
+%%%   (Erlang beamtalk_http) delete: url headers: h         → delete/2
+%%% ============================================================================
+
+-doc "GET-with-headers delegate called by `(Erlang beamtalk_http) get: url headers: headers`.".
+-spec get(binary() | beamtalk_string:t(), list()) ->
+    {ok, beamtalk_http_response:t()} | {error, term()}.
+get(Url, Headers) -> 'get:headers:'(Url, Headers).
+
+-doc "POST-with-headers delegate called by `(Erlang beamtalk_http) post: url headers: headers body: body`.".
+-spec post(binary() | beamtalk_string:t(), list(), binary() | beamtalk_string:t()) ->
+    {ok, beamtalk_http_response:t()} | {error, term()}.
+post(Url, Headers, Body) -> 'post:headers:body:'(Url, Headers, Body).
+
+-doc "PUT-with-headers delegate called by `(Erlang beamtalk_http) put: url headers: headers body: body`.".
+-spec put(binary() | beamtalk_string:t(), list(), binary() | beamtalk_string:t()) ->
+    {ok, beamtalk_http_response:t()} | {error, term()}.
+put(Url, Headers, Body) -> 'put:headers:body:'(Url, Headers, Body).
+
+-doc "DELETE-with-headers delegate called by `(Erlang beamtalk_http) delete: url headers: headers`.".
+-spec delete(binary() | beamtalk_string:t(), list()) ->
+    {ok, beamtalk_http_response:t()} | {error, term()}.
+delete(Url, Headers) -> 'delete:headers:'(Url, Headers).
+
+%%% ============================================================================
 %%% Internal implementation
 %%% ============================================================================
 
@@ -318,20 +360,27 @@ request(Method, Url, Options) -> 'request:url:options:'(Method, Url, Options).
 %%
 %% `Selector` is the public API selector, used in error reports so the user
 %% sees `'get:'` rather than the internal `'do_request'` helper name.
--spec do_request(binary(), binary(), list(), binary(), non_neg_integer(), atom()) ->
-    {ok, term()} | {error, term()}.
-do_request(Method, Url, BtHeaders, Body, Timeout, Selector) ->
+-spec do_request(
+    binary(), binary(), list(), binary(), non_neg_integer(), unlimited | non_neg_integer(), atom()
+) -> {ok, term()} | {error, term()}.
+do_request(Method, Url, BtHeaders, Body, Timeout, MaxBodyBytes, Selector) ->
     case parse_url(Url) of
         {error, invalid_url} ->
             http_error(Selector, #{url => Url}, <<"Invalid URL">>);
-        {ok, #{host := Host, port := Port, path := Path, transport := Transport}} ->
+        {ok, #{
+            host := Host,
+            connect_host := ConnectHost,
+            port := Port,
+            path := Path,
+            transport := Transport
+        }} ->
             %% BT-4173: header names/values arrive tagged — unwrap for gun.
             GunHeaders = to_gun_headers(
                 [norm_header_pair(P) || P <- BtHeaders], Selector
             ),
             GunOpts = build_gun_opts(Transport, Host),
             Deadline = deadline(Timeout),
-            case gun:open(Host, Port, GunOpts) of
+            case gun:open(ConnectHost, Port, GunOpts) of
                 {ok, ConnPid} ->
                     MRef = monitor(process, ConnPid),
                     try
@@ -341,7 +390,7 @@ do_request(Method, Url, BtHeaders, Body, Timeout, Selector) ->
                                     ConnPid, Method, Path, GunHeaders, Body
                                 ),
                                 collect_response(
-                                    ConnPid, StreamRef, MRef, Deadline, Selector
+                                    ConnPid, StreamRef, MRef, Deadline, MaxBodyBytes, Selector
                                 );
                             {error, {down, Reason}} ->
                                 http_error(
@@ -381,39 +430,24 @@ do_request(Method, Url, BtHeaders, Body, Timeout, Selector) ->
 %%
 %% `Deadline` is an absolute monotonic timestamp (ms) so the total wall-clock
 %% time across all gun:await calls is bounded by the original timeout.
--spec collect_response(pid(), reference(), reference(), integer(), atom()) ->
+-spec collect_response(pid(), reference(), reference(), integer(), unlimited | non_neg_integer(), atom()) ->
     {ok, term()} | {error, term()}.
-collect_response(ConnPid, StreamRef, MRef, Deadline, Selector) ->
+collect_response(ConnPid, StreamRef, MRef, Deadline, MaxBodyBytes, Selector) ->
     case gun:await(ConnPid, StreamRef, remaining(Deadline), MRef) of
         {response, fin, Status, GunHeaders} ->
             %% No body (e.g. 204 No Content, HEAD)
-            beamtalk_result:from_tagged_tuple({ok, make_response(Status, GunHeaders, <<>>)});
+            ok_response(Status, GunHeaders, <<>>);
         {response, nofin, Status, GunHeaders} ->
-            case gun:await_body(ConnPid, StreamRef, remaining(Deadline), MRef) of
-                {ok, Body} ->
-                    beamtalk_result:from_tagged_tuple(
-                        {ok, make_response(Status, GunHeaders, Body)}
-                    );
-                {ok, Body, _Trailers} ->
-                    beamtalk_result:from_tagged_tuple(
-                        {ok, make_response(Status, GunHeaders, Body)}
-                    );
-                {error, timeout} ->
-                    http_error(Selector, #{}, <<"Response body timed out">>);
-                {error, Reason} ->
-                    http_error(
-                        Selector,
-                        #{reason => Reason},
-                        <<"Failed to read response body">>
-                    )
-            end;
+            collect_body(
+                ConnPid, StreamRef, MRef, Deadline, Selector, Status, GunHeaders, MaxBodyBytes, <<>>
+            );
         {inform, _Status, _Headers} ->
             %% 1xx Informational (e.g. 100 Continue, 103 Early Hints) — skip and wait
-            collect_response(ConnPid, StreamRef, MRef, Deadline, Selector);
+            collect_response(ConnPid, StreamRef, MRef, Deadline, MaxBodyBytes, Selector);
         {push, _PushedStreamRef, _Method, _URI, _Headers} ->
             %% HTTP/2 server push — not used, skip
             ?LOG_DEBUG("beamtalk_http: ignoring HTTP/2 server push", #{}),
-            collect_response(ConnPid, StreamRef, MRef, Deadline, Selector);
+            collect_response(ConnPid, StreamRef, MRef, Deadline, MaxBodyBytes, Selector);
         {upgrade, _Protocols, _Headers} ->
             %% Protocol upgrade (e.g. WebSocket) — unexpected in plain HTTP flow
             http_error(Selector, #{}, <<"Unexpected protocol upgrade">>);
@@ -423,15 +457,103 @@ collect_response(ConnPid, StreamRef, MRef, Deadline, Selector) ->
         {data, _IsFin, _Data} ->
             %% Data frame before response headers — unexpected, skip
             ?LOG_DEBUG("beamtalk_http: ignoring unexpected data frame", #{}),
-            collect_response(ConnPid, StreamRef, MRef, Deadline, Selector);
+            collect_response(ConnPid, StreamRef, MRef, Deadline, MaxBodyBytes, Selector);
         {trailers, _Trailers} ->
             %% Trailers before response headers — unexpected, skip
-            collect_response(ConnPid, StreamRef, MRef, Deadline, Selector);
+            collect_response(ConnPid, StreamRef, MRef, Deadline, MaxBodyBytes, Selector);
         {error, timeout} ->
             http_error(Selector, #{}, <<"Request timed out">>);
         {error, Reason} ->
             http_error(Selector, #{reason => Reason}, <<"Request failed">>)
     end.
+
+-doc """
+Collect the response body, enforcing the `maxBodyBytes` cap when set.
+
+With `unlimited` the whole body is accumulated via `gun:await_body/4`
+(the historical behaviour). With a byte cap, data frames are accumulated
+incrementally and the request fails as soon as the running total exceeds
+the cap, so an over-large body never materialises in memory.
+""".
+-spec collect_body(
+    pid(), reference(), reference(), integer(), atom(), non_neg_integer(), list(),
+    unlimited | non_neg_integer(), binary()
+) -> {ok, term()} | {error, term()}.
+collect_body(ConnPid, StreamRef, MRef, Deadline, Selector, Status, GunHeaders, unlimited, _Acc) ->
+    case gun:await_body(ConnPid, StreamRef, remaining(Deadline), MRef) of
+        {ok, Body} ->
+            ok_response(Status, GunHeaders, Body);
+        {ok, Body, _Trailers} ->
+            ok_response(Status, GunHeaders, Body);
+        {error, timeout} ->
+            http_error(Selector, #{}, <<"Response body timed out">>);
+        {error, Reason} ->
+            http_error(
+                Selector,
+                #{reason => Reason},
+                <<"Failed to read response body">>
+            )
+    end;
+collect_body(ConnPid, StreamRef, MRef, Deadline, Selector, Status, GunHeaders, Cap, Acc) ->
+    case gun:await(ConnPid, StreamRef, remaining(Deadline), MRef) of
+        {data, Fin, Data} ->
+            NewSize = byte_size(Acc) + byte_size(Data),
+            case NewSize > Cap of
+                true ->
+                    http_error(
+                        Selector,
+                        #{limit => Cap},
+                        <<"Response body exceeded limit">>
+                    );
+                false ->
+                    NewAcc = <<Acc/binary, Data/binary>>,
+                    case Fin of
+                        fin ->
+                            ok_response(Status, GunHeaders, NewAcc);
+                        nofin ->
+                            collect_body(
+                                ConnPid, StreamRef, MRef, Deadline,
+                                Selector, Status, GunHeaders, Cap, NewAcc
+                            )
+                    end
+            end;
+        {trailers, _Trailers} ->
+            %% Trailers end the body — whatever arrived within the cap stands.
+            ok_response(Status, GunHeaders, Acc);
+        {inform, _Status, _Headers} ->
+            %% Late 1xx — skip and keep collecting
+            collect_body(
+                ConnPid, StreamRef, MRef, Deadline,
+                Selector, Status, GunHeaders, Cap, Acc
+            );
+        {push, _PushedStreamRef, _Method, _URI, _Headers} ->
+            ?LOG_DEBUG("beamtalk_http: ignoring HTTP/2 server push", #{}),
+            collect_body(
+                ConnPid, StreamRef, MRef, Deadline,
+                Selector, Status, GunHeaders, Cap, Acc
+            );
+        {upgrade, _Protocols, _Headers} ->
+            http_error(Selector, #{}, <<"Unexpected protocol upgrade">>);
+        {ws, _Frame} ->
+            http_error(Selector, #{}, <<"Unexpected WebSocket frame">>);
+        {response, _Fin, _RStatus, _RHeaders} ->
+            %% A second response on one stream cannot happen — fail loudly
+            %% rather than looping on it forever.
+            http_error(Selector, #{}, <<"Unexpected duplicate response">>);
+        {error, timeout} ->
+            http_error(Selector, #{}, <<"Response body timed out">>);
+        {error, Reason} ->
+            http_error(
+                Selector,
+                #{reason => Reason},
+                <<"Failed to read response body">>
+            )
+    end.
+
+-doc "Wrap a completed status/headers/body triple as a Result ok: HTTPResponse.".
+-spec ok_response(non_neg_integer(), list(), binary()) -> {ok, term()}.
+ok_response(Status, GunHeaders, Body) ->
+    beamtalk_result:from_tagged_tuple({ok, make_response(Status, GunHeaders, Body)}).
 
 %% @private Build a Beamtalk HTTPResponse using the generated keyword constructor.
 %%
@@ -449,8 +571,10 @@ collect_response(ConnPid, StreamRef, MRef, Deadline, Selector) ->
 make_response(Status, GunHeaders, Body) ->
     BtHeaders = from_gun_headers(GunHeaders),
     %% BT-4173: a text body answers a String; non-text bytes stay Binary.
-    ?BT_CLASS_MODULE_HTTPResponse:'class_status:headers:body:'(
-        undefined, Status, BtHeaders, beamtalk_http_text:maybe_tag(Body)
+    %% BT-4083: plain value — no stream, no file.
+    ?BT_CLASS_MODULE_HTTPResponse:'class_status:headers:body:stream:file:fileOffset:fileLength:'(
+        undefined, Status, BtHeaders, beamtalk_http_text:maybe_tag(Body),
+        nil, nil, 0, all
     ).
 
 -doc """
@@ -486,8 +610,10 @@ parse_url(Url) ->
                     undefined -> Path1;
                     Q -> <<Path1/binary, "?", Q/binary>>
                 end,
+            HostList = binary_to_list(Host),
             {ok, #{
-                host => binary_to_list(Host),
+                host => HostList,
+                connect_host => resolve_connect_host(HostList),
                 port => Port,
                 path => Path,
                 transport => Transport
@@ -514,16 +640,40 @@ build_gun_opts(tls, Host) ->
         tls_handshake_timeout => ?TLS_HANDSHAKE_TIMEOUT,
         tls_opts => [
             {verify, verify_peer},
-            {cacerts, public_key:cacerts_get()},
-            {server_name_indication, Host},
+            {cacerts, public_key:cacerts_get()}
+            | sni_opts(Host)
+        ] ++ [
             {customize_hostname_check, [
                 {match_fun, public_key:pkix_verify_hostname_match_fun(https)}
             ]}
         ]
     }).
 
+-doc """
+Options carrying server_name_indication — omitted for literal IP addresses
+(RFC 6066 forbids IPs in SNI).
+""".
+-spec sni_opts(string()) -> list().
+sni_opts(Host) ->
+    case inet:parse_address(Host) of
+        {ok, _} -> [];
+        {error, _} -> [{server_name_indication, Host}]
+    end.
+
 connect_opts(Opts) ->
     Opts#{connect_timeout => ?CONNECT_TIMEOUT, retry_timeout => ?RETRY_TIMEOUT}.
+
+-doc """
+Resolve the host for `gun:open/3`: an IP literal (v4 or v6) becomes an
+address tuple so no DNS lookup is attempted; anything else passes through
+as a hostname string.
+""".
+-spec resolve_connect_host(string()) -> string() | inet:ip_address().
+resolve_connect_host(Host) ->
+    case inet:parse_address(Host) of
+        {ok, IP} -> IP;
+        {error, _} -> Host
+    end.
 
 -doc """
 Convert Beamtalk headers list to gun headers format.
@@ -595,6 +745,18 @@ validate_request_options(_Headers, _Body, Timeout) when
     );
 validate_request_options(_Headers, _Body, _Timeout) ->
     ok.
+
+-doc "Validate the maxBodyBytes request option: unlimited or a non-negative Integer.".
+-spec validate_max_body_bytes(unlimited | non_neg_integer()) -> ok.
+validate_max_body_bytes(unlimited) ->
+    ok;
+validate_max_body_bytes(N) when is_integer(N), N >= 0 ->
+    ok;
+validate_max_body_bytes(_) ->
+    type_error(
+        'request:url:options:',
+        <<"Options.maxBodyBytes must be unlimited or a non-negative Integer">>
+    ).
 
 -doc """
 Normalise a method value to an uppercase binary.

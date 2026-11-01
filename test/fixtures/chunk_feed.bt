@@ -1,0 +1,24 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// Test actor: answers a `streamWith:` response whose block pulls each
+/// chunk from the actor with a sync self-send, proving a streaming block
+/// runs in the connection process and can read live actor state.
+Actor subclass: ChunkFeed
+  state: rows :: List(String) = #()
+  state: index :: Integer = 0
+
+  handle: _req :: HTTPRequest -> HTTPResponse =>
+    HTTPResponse
+      streamWith: [:resp |
+        resp startChunked: 200 headers: #(#("content-type", "text/plain"))
+        [self hasMore] whileTrue: [(resp sendChunk: self next) unwrap]
+        resp finish
+      ]
+
+  hasMore -> Boolean => self.index < self.rows size
+
+  next -> String =>
+    row := self.rows at: self.index + 1
+    self.index := self.index + 1
+    row

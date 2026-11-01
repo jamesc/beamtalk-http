@@ -281,6 +281,30 @@ validate_options_non_integer_timeout_test() ->
 validate_options_zero_timeout_ok_test() ->
     ?assertEqual(ok, beamtalk_http:validate_request_options([], <<>>, 0)).
 
+validate_max_body_bytes_unlimited_ok_test() ->
+    ?assertEqual(ok, beamtalk_http:validate_max_body_bytes(unlimited)).
+
+validate_max_body_bytes_zero_ok_test() ->
+    ?assertEqual(ok, beamtalk_http:validate_max_body_bytes(0)).
+
+validate_max_body_bytes_negative_test() ->
+    ?assertError(
+        #{
+            '$beamtalk_class' := _,
+            error := #beamtalk_error{kind = type_error, selector = 'request:url:options:'}
+        },
+        beamtalk_http:validate_max_body_bytes(-1)
+    ).
+
+validate_max_body_bytes_non_integer_test() ->
+    ?assertError(
+        #{
+            '$beamtalk_class' := _,
+            error := #beamtalk_error{kind = type_error, selector = 'request:url:options:'}
+        },
+        beamtalk_http:validate_max_body_bytes(many)
+    ).
+
 %%% ============================================================================
 %%% to_gun_headers/2
 %%% ============================================================================
@@ -369,6 +393,23 @@ parse_url_no_scheme_test() ->
 parse_url_garbage_test() ->
     ?assertEqual({error, invalid_url}, beamtalk_http:parse_url(<<"not a url">>)).
 
+parse_url_ipv4_literal_connect_host_test() ->
+    {ok, #{host := Host, connect_host := ConnectHost}} =
+        beamtalk_http:parse_url(<<"http://127.0.0.1:8080/">>),
+    ?assertEqual("127.0.0.1", Host),
+    ?assertEqual({127, 0, 0, 1}, ConnectHost).
+
+parse_url_ipv6_literal_connect_host_test() ->
+    {ok, #{host := Host, connect_host := ConnectHost}} =
+        beamtalk_http:parse_url(<<"http://[::1]:8080/">>),
+    ?assertEqual("::1", Host),
+    ?assertEqual({0, 0, 0, 0, 0, 0, 0, 1}, ConnectHost).
+
+parse_url_hostname_connect_host_test() ->
+    {ok, #{connect_host := ConnectHost}} =
+        beamtalk_http:parse_url(<<"http://example.com/">>),
+    ?assertEqual("example.com", ConnectHost).
+
 %%% ============================================================================
 %%% build_gun_opts/2 — TLS connection options (BT-3191)
 %%%
@@ -408,6 +449,11 @@ build_gun_opts_tls_test() ->
         {customize_hostname_check, [{match_fun, _}]},
         lists:keyfind(customize_hostname_check, 1, TlsOpts)
     ).
+
+build_gun_opts_tls_ip_literal_omits_sni_test() ->
+    %% RFC 6066: a literal IP must not appear in server_name_indication.
+    #{tls_opts := TlsOpts} = beamtalk_http:build_gun_opts(tls, "127.0.0.1"),
+    ?assertEqual(false, lists:keyfind(server_name_indication, 1, TlsOpts)).
 
 %%% ============================================================================
 %%% No-colon delegate type-error guards (BT-1117)

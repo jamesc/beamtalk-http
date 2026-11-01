@@ -1,0 +1,9 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// Test actor: answers a `file:` response from an `HTTPHandler` actor,
+/// proving sendfile values work off-owner (they carry no live handle).
+Actor subclass: FileActor
+
+  handle: _req :: HTTPRequest -> HTTPResponse =>
+    ((HTTPResponse file: "test/fixtures/stream_file") withStatus: 200) withHeaders: #(#("content-type", "text/plain"))

@@ -11,7 +11,7 @@ Provides the canonical Dialyzer-visible type `t()` for HTTPResponse value
 objects returned by `beamtalk_http`. The runtime map structure is produced
 by the Beamtalk compiler from `field:` declarations in `src/httpresponse.bt`
 and constructed by the generated HTTPResponse keyword constructor
-`class_status:headers:body:/4`.
+`class_status:headers:body:stream:file:fileOffset:fileLength:/8`.
 
 This module is a type-only companion to `beamtalk_http` — it exports no
 functions. The generated HTTPResponse module is excluded from the Dialyzer PLT
@@ -26,9 +26,13 @@ map structure so that `-spec` annotations in `beamtalk_http` can reference
 The map type for a Beamtalk HTTPResponse value object.
 
 Fields mirror the `field:` declarations in `src/httpresponse.bt`:
-  field: status  :: Integer = 0
-  field: headers :: List    = #()
-  field: body    :: String  = ""
+  field: status     :: Integer = 0
+  field: headers    :: List    = #()
+  field: body       :: String  = ""
+  field: stream     = nil
+  field: file       = nil
+  field: fileOffset :: Integer = 0
+  field: fileLength = #all
 
 BT-4173: headers/body answer Strings when the wire bytes are valid
 UTF-8, and stay bare Binaries otherwise (non-text payloads).
@@ -37,5 +41,9 @@ UTF-8, and stay bare Binaries otherwise (non-text payloads).
     '$beamtalk_class' := 'HTTPResponse',
     'status' := integer(),
     'headers' := [[binary() | beamtalk_string:t()]],
-    'body' := binary() | beamtalk_string:t()
+    'body' := binary() | beamtalk_string:t(),
+    'stream' := fun() | nil,
+    'file' := binary() | beamtalk_string:t() | nil,
+    'fileOffset' := integer(),
+    'fileLength' := integer() | all
 }.

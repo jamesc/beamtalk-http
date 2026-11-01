@@ -10,7 +10,7 @@ Add the dependency to your `beamtalk.toml`:
 
 ```toml
 [dependencies]
-http = "0.1.0"
+http = "0.2.0"
 ```
 
 Then run:
@@ -72,12 +72,13 @@ srv := HTTPServer start: 0
 
 Known differences on the buccaneer backend:
 
-- Request bodies are capped at 8 MB (larger ones answer 413);
-  cowboy reads unbounded bodies.
+- `req body` is capped at 8 MB (larger ones answer 413), while
+  `req readChunk` streams past that in parts; cowboy reads unbounded
+  bodies.
+- Streaming (`streamWith:`, `file:`, `file:offset:length:` — below) needs
+  buccaneer: cowboy answers those values with a 500.
 - `#bind` takes IPv4 dotted quads and IPv6 (with `::` compression
   and embedded v4 tails) on both backends.
-- No interim `100-continue` is sent (engine Phase 3): clients that
-  wait for one hit the read timeout instead of getting a status.
 - Malformed percent-encoding in the query and malformed chunk framing
   answer 400 (cowboy crashes those requests into a 500).
 - The handler is validated at start on both backends, matching
@@ -88,6 +89,58 @@ Known differences on the buccaneer backend:
   `Result tryDo:`/`on:do:` and crashes the starting process.
 
 CI runs the suite on both backends; see `.github/workflows/ci.yml`.
+
+### Streaming (buccaneer backend)
+
+Handlers answer one `HTTPResponse` value in three shapes. Plain values
+go out with `status`/`headers`/`body` as before. The other two stream,
+in bounded memory, and need `#backend => #buccaneer`:
+
+```beamtalk
+// Chunked: the adapter runs the block in the connection process.
+HTTPResponse streamWith: [:resp |
+  resp startChunked: 200 headers: #(#("content-type", "text/plain"))
+  resp sendChunk: "part 1"
+  resp sendChunk: "part 2"
+  resp finish]
+
+// Sendfile (a read-and-send loop over TLS): plain values.
+(HTTPResponse file: "test/fixtures/stream_file") withStatus: 200
+(HTTPResponse file: "test/fixtures/stream_file" offset: 4 length: 6)
+  withStatus: 200
+```
+
+`startChunked:` answers `Result ok: nil`, or `Result error: #closed`
+when the client has gone (as does `sendChunk:`); a second start raises
+`AlreadySent`. If the block returns without `finish`, the adapter
+finishes the response; if it never calls `startChunked:headers:`, the
+request is a 500. A raise after the headers went out cannot become a
+500: the connection is closed and the error is logged.
+
+Request bodies stream the same way, for block and router handlers
+(which run in the connection process):
+
+```beamtalk
+total := 0
+done := false
+[done] whileFalse: [
+  chunk := (req readChunk) unwrap   // Result(Binary, Error); empty means end
+  chunk isEmpty ifTrue: [done := true] ifFalse: [total := total + chunk size]
+]
+```
+
+`req body` stays and reads the rest (bounded by 8 MB, 413 past it).
+`req inform: 103 headers: h` sends an interim response (`Result error:
+#not_supported` on HTTP/1.0); `100 Continue` goes out automatically on
+the first body read. `HTTPHandler` actors get the whole body read
+before they are called.
+
+Every handle here is owner-bound: `readChunk`, `inform:headers:` and
+the writer's methods (`startChunked:headers:`, `sendChunk:`, `finish`)
+work only in the connection process and raise a clear `#not_owner`
+error anywhere else. (`req body` answers the buffered body off-owner,
+so actors keep working; without an exchange, as on cowboy, `readChunk`
+and `inform:headers:` answer `Result error: #not_supported`.)
 
 ### HTTP Router
 
@@ -147,6 +200,22 @@ visibility:
 Use a block/router/`PlugChain` for stateless request handling; back a route
 with an `HTTPHandler` actor when it needs live or post-startup-configurable
 state.
+
+An actor streams the same way every handler does, with `streamWith:`
+(buccaneer backend): the block is created in the actor but runs in the
+connection process. It sees the actor's fields as captured when the block
+was made, assigning one raises `actor_state_unreachable`, and a send to
+`self` is an ordinary sync message to the actor — so the block can pull
+each chunk from the live actor:
+
+```beamtalk
+Actor subclass: ReportHandler
+  handle: req :: HTTPRequest -> HTTPResponse =>
+    HTTPResponse streamWith: [:resp |
+      resp startChunked: 200 headers: #(#("content-type", "text/csv"))
+      [self hasMoreRows] whileTrue: [resp sendChunk: self nextRows]
+      resp finish]
+```
 
 ## Classes
 

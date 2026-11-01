@@ -34,11 +34,99 @@ sealed Value subclass: HTTPRequest
   /// Request headers as a List of [name, value] binary pairs.
   field: headers :: List(List(String)) = #()
   /// Request body: a String when the bytes are valid UTF-8, otherwise a Binary.
+  ///
+  /// An explicit method below replaces the generated getter: with a live
+  /// exchange, in the connection process, reading `body` reads the rest
+  /// of the request body; anywhere else (or with no exchange) it answers
+  /// this buffered value.
   field: body :: String | Binary = ""
   /// Query parameters as a Dictionary.
   field: queryParams :: Dictionary(String, String) = #{}
   /// Path parameters extracted by HTTPRouter (e.g. `:id` → "42").
   field: params :: Dictionary(String, String) = #{}
+  /// The buccaneer `Exchange` this request arrived on (nil on cowboy and
+  /// in hand-built requests). It is owner-bound: every operation that
+  /// touches the connection works only in the connection process, and
+  /// raises `#not_owner` anywhere else.
+  field: exchange :: Exchange | Nil = nil
+
+  /// The next part of the request body; an empty Binary means the end of
+  /// the body. For block and router handlers, which run in the connection
+  /// process: `HTTPHandler` actors already get the whole body, and using
+  /// `readChunk` there raises `#not_owner`. Without an exchange (cowboy,
+  /// hand-built requests) there is nothing to stream, so this answers
+  /// `Result error: #not_supported`.
+  ///
+  /// ## Examples
+  /// ```beamtalk
+  /// total := 0
+  /// done := false
+  /// [done] whileFalse: [
+  ///   chunk := (req readChunk) unwrap
+  ///   chunk isEmpty ifTrue: [done := true] ifFalse: [total := total + chunk size]
+  /// ]
+  /// ```
+  readChunk -> Result(Binary, Error) =>
+    ex := self.exchange
+    ex isNil ifTrue: [^Result error: #not_supported]
+    part := ex readBody
+    part isError ifTrue: [^part]
+    Result ok: part value data
+
+  /// The rest of the request body (Plug `read_body` semantics): whatever
+  /// the handler has not already consumed with `readChunk`, bounded by
+  /// `HttpExchangeAdapter maxBodyBytes` (answers 413 itself when the rest
+  /// is larger, then raises — the adapter passes that raise through to
+  /// the engine since the response has started). A String when the bytes
+  /// are valid UTF-8, otherwise a Binary, as the buffered body is.
+  ///
+  /// This reads from the exchange only in the connection process. Anywhere
+  /// else — an `HTTPHandler` actor, which gets the whole body read before
+  /// it is called, or a request with no exchange — it answers the buffered
+  /// body, so it never trips `#not_owner`.
+  ///
+  /// A buffered body set by construction (a Plug's `withBody:` copy) wins
+  /// over the live stream: a transforming plug has already consumed the
+  /// stream to build it, so re-reading would answer the drained remainder
+  /// (or raise) instead of the transformed value downstream must see.
+  body -> String | Binary =>
+    ex := self.exchange
+    ex isNil ifTrue: [^self.body]
+    owned := Pid current =:= ex owner
+    // self.body here is the stored field: this explicit method replaces
+    // the generated getter.
+    owned ifFalse: [^self.body]
+    self.body isEmpty ifFalse: [^self.body]
+    read := ex readAll: HttpExchangeAdapter maxBodyBytes
+    read isError
+      ifTrue: [
+        // The 413 goes out here, before raising: the adapter sees a
+        // started exchange and passes the raise to the engine instead of
+        // sending a second response. The message is free-form — nothing
+        // matches on its text.
+        read error =:= #body_too_large
+          ifTrue: [
+            HttpExchangeAdapter send413: ex
+            Error signal: "request body exceeds the size limit"
+          ]
+        read error =:= #closed ifTrue: [
+          TransportError signal: "client closed connection during body read"
+        ]
+        Error signal: ("Request body read failed: " ++ read error printString)
+      ]
+    data := read value
+    converted := data asString
+    converted isError ifTrue: [^data]
+    converted value
+
+  /// A 1xx informational response while the handler runs (`103 Early
+  /// Hints`, ...). Answers `Result error: #not_supported` on HTTP/1.0 —
+  /// and without an exchange, as on cowboy. From another process the
+  /// exchange raises `#not_owner`.
+  inform: status :: Integer headers: hs :: List(List(String)) -> Result(Nil, Object) =>
+    ex := self.exchange
+    ex isNil ifTrue: [^Result error: #not_supported]
+    ex inform: status headers: (HttpExchangeAdapter responseHeaders: hs)
 
   /// Return the value of a named path parameter.
   ///

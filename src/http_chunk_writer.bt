@@ -1,0 +1,53 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// HttpChunkWriter — the owner-bound handle a `streamWith:` block writes
+/// a chunked response through.
+///
+/// The adapter builds one over the request's `Exchange` and runs the
+/// block in the connection process, so every method works there; from
+/// any other process the exchange raises `#not_owner`. Without an
+/// exchange the methods answer `Result error: #not_supported`.
+///
+/// ## Examples
+/// ```beamtalk
+/// HTTPResponse streamWith: [:resp |
+///   resp startChunked: 200 headers: #(#("content-type", "text/plain"))
+///   resp sendChunk: "part 1"
+///   resp sendChunk: "part 2"
+///   resp finish]
+/// ```
+Value subclass: HttpChunkWriter
+  /// The exchange the chunks go out on (nil outside the adapter).
+  field: exchange :: Exchange | Nil = nil
+
+  /// Start the response. With `content-length` set the body streams
+  /// length-delimited; otherwise chunk-framed. Answers `Result ok: nil`,
+  /// or `Result error: #closed` when the client has gone (`#not_supported`
+  /// without an exchange). Starting twice raises `AlreadySent`, as
+  /// sending twice does.
+  startChunked: status :: Integer headers: hs :: List(List(String)) -> Result(Nil, Symbol | String) =>
+    ex := self.exchange
+    ex isNil ifTrue: [^Result error: #not_supported]
+    [
+      ex sendChunked: status headers: (HttpExchangeAdapter responseHeaders: hs)
+    ] on: TransportError do: [:e | ^Result error: #closed]
+    Result ok: nil
+
+  /// One chunk; an empty one ends the response. Answers
+  /// `Result ok: nil`, or `Result error: #closed` when the client has
+  /// gone (`#not_supported` without an exchange; a String message for
+  /// generic engine errors). Before `startChunked:headers:` this raises
+  /// `NotChunked`.
+  sendChunk: data :: Object -> Result(Nil, Symbol | String) =>
+    ex := self.exchange
+    ex isNil ifTrue: [^Result error: #not_supported]
+    ex chunk: data
+
+  /// End the response (the closing chunk). Answers `Result ok: nil`, or
+  /// `Result error: #closed` when the client has gone (`#not_supported`
+  /// without an exchange; a String message for generic engine errors).
+  finish -> Result(Nil, Symbol | String) =>
+    ex := self.exchange
+    ex isNil ifTrue: [^Result error: #not_supported]
+    ex chunk: ""

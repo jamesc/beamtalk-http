@@ -34,7 +34,6 @@ jobs:
 
       - name: Lint
         run: just lint
-        continue-on-error: true
 
       - name: Build
         run: just build
