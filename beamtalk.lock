@@ -4,8 +4,8 @@
 [[package]]
 name = "buccaneer"
 url = "https://github.com/jamesc/beamtalk-buccaneer"
-reference = "rev:75839fd0e4eef5c07e0ade8b10aa8d70d4f92f30"
-sha = "75839fd0e4eef5c07e0ade8b10aa8d70d4f92f30"
+reference = "rev:4d9a5993059ebe31d71c4fd950250083da5b2808"
+sha = "4d9a5993059ebe31d71c4fd950250083da5b2808"
 
 [[package]]
 name = "catalina"
