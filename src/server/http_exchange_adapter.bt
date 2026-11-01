@@ -39,8 +39,10 @@ Object subclass: HttpExchangeAdapter
         started := [
           ex state =:= #sent or: [ex state =:= #chunked]
         ] on: Error do: [:err | false]
+        // A raise after the response started — including `req body`
+        // answering 413 itself once over the limit — passes through to
+        // the engine, which closes the connection and logs it.
         started ifTrue: [e pass]
-        (e message startsWith: "body_too_large:") ifTrue: [^self send413: ex]
         Logger error: ("HTTP handler failed: " ++ e printString) metadata: #{
           #domain => #(#http)
         }
@@ -195,7 +197,14 @@ Object subclass: HttpExchangeAdapter
     read isNil ifTrue: [^nil]
     read isError
       ifTrue: [
-        read error =:= #body_too_large ifTrue: [^self send413: ex]
+        // The 413 is already on the wire here: answer nil so the caller
+        // returns without sending a second response (sendResp: answers
+        // the Exchange, not nil — a second send would raise AlreadySent).
+        read error =:= #body_too_large
+          ifTrue: [
+            self send413: ex
+            ^nil
+          ]
         read error =:= #closed ifTrue: [
           TransportError signal: "client closed connection during body read"
         ]

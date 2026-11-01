@@ -18,6 +18,12 @@
 /// live, mutable actor state should be backed by an actor implementing
 /// `HTTPHandler>>handle:` instead, not by `PlugChain`.
 ///
+/// When transforming the request (or response) before passing it on,
+/// use a `withX:` copy (`req withBody: ...`) rather than rebuilding it
+/// with `new:`: a rebuild drops the `#exchange` handle (breaking body
+/// streaming downstream on `#buccaneer`) and any `#stream`/`#file`
+/// response shape.
+///
 /// ## Writing a Plug
 /// ```beamtalk
 /// Value subclass: RequestLogger

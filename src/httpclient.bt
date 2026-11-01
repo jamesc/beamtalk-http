@@ -48,6 +48,15 @@ Actor subclass: HTTPClient
   class get: url :: String -> Result(HTTPResponse, Exception) =>
     Erlang beamtalk_http get: url
 
+  /// Perform a one-shot GET request with headers (class method).
+  ///
+  /// ## Examples
+  /// ```beamtalk
+  /// resp := (HTTPClient get: "https://httpbin.org/get" headers: #(#("X-Custom", "value"))) unwrap
+  /// ```
+  class get: url :: String headers: headers :: List(List(String)) -> Result(HTTPResponse, Exception) =>
+    Erlang beamtalk_http get: url headers: headers
+
   /// Perform a one-shot POST request with body (class method).
   ///
   /// ## Examples
@@ -57,6 +66,13 @@ Actor subclass: HTTPClient
   /// ```
   class post: url :: String body: body :: String -> Result(HTTPResponse, Exception) =>
     (Erlang beamtalk_http) post: url body: body
+
+  /// Perform a one-shot POST request with headers and body (class method).
+  class post: url :: String headers: headers :: List(List(String)) body: body :: String -> Result(HTTPResponse, Exception) =>
+    (Erlang beamtalk_http)
+      post: url
+      headers: headers
+      body: body
 
   /// Perform a one-shot PUT request with body (class method).
   ///
@@ -68,6 +84,13 @@ Actor subclass: HTTPClient
   class put: url :: String body: body :: String -> Result(HTTPResponse, Exception) =>
     (Erlang beamtalk_http) put: url body: body
 
+  /// Perform a one-shot PUT request with headers and body (class method).
+  class put: url :: String headers: headers :: List(List(String)) body: body :: String -> Result(HTTPResponse, Exception) =>
+    (Erlang beamtalk_http)
+      put: url
+      headers: headers
+      body: body
+
   /// Perform a one-shot DELETE request (class method).
   ///
   /// ## Examples
@@ -78,12 +101,19 @@ Actor subclass: HTTPClient
   class delete: url :: String -> Result(HTTPResponse, Exception) =>
     (Erlang beamtalk_http) delete: url
 
+  /// Perform a one-shot DELETE request with headers (class method).
+  class delete: url :: String headers: headers :: List(List(String)) -> Result(HTTPResponse, Exception) =>
+    Erlang beamtalk_http delete: url headers: headers
+
   /// Perform a one-shot generic request (class method).
   ///
   /// Options dict may contain:
   ///   - `#headers` — List of [name, value] binary pairs
   ///   - `#body`    — Request body String
   ///   - `#timeout` — Timeout in milliseconds (default 30000)
+  ///   - `#maxBodyBytes` — Cap on the response body in bytes: larger
+  ///     bodies answer `Result error:` without materialising in memory
+  ///     (default `unlimited`)
   ///
   /// ## Examples
   /// ```beamtalk
@@ -116,6 +146,15 @@ Actor subclass: HTTPClient
       url: url
       options: #{#headers => self.headers, #timeout => self.timeout}
 
+  /// Perform a GET request with explicit headers, replacing the actor
+  /// defaults for this request (as `#headers` in `request:path:options:`).
+  get: path :: String headers: headers :: List(List(String)) -> Result(HTTPResponse, Exception) =>
+    url := self.baseUrl ++ path
+    (Erlang beamtalk_http)
+      request: #get
+      url: url
+      options: #{#headers => headers, #timeout => self.timeout}
+
   /// Perform a POST request using the stored base URL and default options.
   ///
   /// ## Examples
@@ -126,6 +165,16 @@ Actor subclass: HTTPClient
   post: path :: String body: body :: String -> Result(HTTPResponse, Exception) =>
     url := self.baseUrl ++ path
     opts := #{#headers => self.headers, #timeout => self.timeout, #body => body}
+    (Erlang beamtalk_http)
+      request: #post
+      url: url
+      options: opts
+
+  /// Perform a POST request with explicit headers (replacing the actor
+  /// defaults) and body.
+  post: path :: String headers: headers :: List(List(String)) body: body :: String -> Result(HTTPResponse, Exception) =>
+    url := self.baseUrl ++ path
+    opts := #{#headers => headers, #timeout => self.timeout, #body => body}
     (Erlang beamtalk_http)
       request: #post
       url: url
@@ -146,6 +195,16 @@ Actor subclass: HTTPClient
       url: url
       options: opts
 
+  /// Perform a PUT request with explicit headers (replacing the actor
+  /// defaults) and body.
+  put: path :: String headers: headers :: List(List(String)) body: body :: String -> Result(HTTPResponse, Exception) =>
+    url := self.baseUrl ++ path
+    opts := #{#headers => headers, #timeout => self.timeout, #body => body}
+    (Erlang beamtalk_http)
+      request: #put
+      url: url
+      options: opts
+
   /// Perform a DELETE request using the stored base URL and default options.
   ///
   /// ## Examples
@@ -160,6 +219,15 @@ Actor subclass: HTTPClient
       url: url
       options: #{#headers => self.headers, #timeout => self.timeout}
 
+  /// Perform a DELETE request with explicit headers, replacing the actor
+  /// defaults for this request.
+  delete: path :: String headers: headers :: List(List(String)) -> Result(HTTPResponse, Exception) =>
+    url := self.baseUrl ++ path
+    (Erlang beamtalk_http)
+      request: #delete
+      url: url
+      options: #{#headers => headers, #timeout => self.timeout}
+
   /// Perform a generic request using the stored base URL.
   ///
   /// The `method` may be a Symbol (e.g. `#patch`) or a String (e.g. `"PATCH"`).
@@ -167,6 +235,7 @@ Actor subclass: HTTPClient
   ///   - `#headers` — request headers (overrides actor defaults)
   ///   - `#body`    — request body String
   ///   - `#timeout` — per-request timeout in milliseconds
+  ///   - `#maxBodyBytes` — cap on the response body in bytes (default `unlimited`)
   ///
   /// ## Examples
   /// ```beamtalk

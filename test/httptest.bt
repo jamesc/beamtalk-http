@@ -199,6 +199,117 @@ TestCase subclass: HTTPTest
     self assert: resp status equals: 200
     self assert: client stop equals: #ok
 
+  // ===== HTTPClient instance — request:path:options: =====
+  testInstanceRequestUsesBaseUrlAndBodyOption =>
+    client := HTTPClient spawnWith: #{#baseUrl => self.baseUrl}
+    resp := (client
+      request: #post
+      path: "/post"
+      options: #{#body => "instance-generic"}) unwrap
+    self assert: resp status equals: 200
+    #{"body" => body} := self assertOk: resp bodyAsJson
+    self assert: body equals: "instance-generic"
+    self assert: client stop equals: #ok
+
+  testInstanceRequestHeadersReplaceDefaults =>
+    client := HTTPClient spawnWith: #{
+      #baseUrl => self.baseUrl,
+      #headers => #(#("x-client-header", "persistent"))
+    }
+    resp := (client
+      request: #get
+      path: "/echo-headers"
+      options: #{#headers => #(#("x-req-header", "req"))}) unwrap
+    parsed := self assertOk: resp bodyAsJson
+    #{"x-req-header" => echoed} := parsed
+    self assert: echoed equals: "req"
+    self assert: (parsed at: "x-client-header" ifAbsent: [
+      "absent"
+    ]) equals: "absent"
+    self assert: client stop equals: #ok
+
+  // ===== Per-verb headers conveniences =====
+  testClassGetHeaders =>
+    resp := (HTTPClient get: self.baseUrl ++ "/echo-headers" headers: #(#("x-verbose-test", "vget"))) unwrap
+    self assert: resp status equals: 200
+    #{"x-verbose-test" => echoed} := self assertOk: resp bodyAsJson
+    self assert: echoed equals: "vget"
+
+  testClassPostHeadersBody =>
+    headersResp := (HTTPClient
+      post: self.baseUrl ++ "/echo-headers"
+      headers: #(#("x-verbose-test", "vpost"))
+      body: "hello") unwrap
+    #{"x-verbose-test" => echoed} := self assertOk: headersResp bodyAsJson
+    self assert: echoed equals: "vpost"
+    bodyResp := (HTTPClient
+      post: self.baseUrl ++ "/post"
+      headers: #()
+      body: "hello") unwrap
+    #{"body" => body} := self assertOk: bodyResp bodyAsJson
+    self assert: body equals: "hello"
+
+  testClassPutHeadersBody =>
+    headersResp := (HTTPClient
+      put: self.baseUrl ++ "/echo-headers"
+      headers: #(#("x-verbose-test", "vput"))
+      body: "hello") unwrap
+    #{"x-verbose-test" => echoed} := self assertOk: headersResp bodyAsJson
+    self assert: echoed equals: "vput"
+    bodyResp := (HTTPClient
+      put: self.baseUrl ++ "/put"
+      headers: #()
+      body: "update") unwrap
+    #{"body" => body} := self assertOk: bodyResp bodyAsJson
+    self assert: body equals: "update"
+
+  testClassDeleteHeaders =>
+    resp := (HTTPClient delete: self.baseUrl ++ "/echo-headers" headers: #(#("x-verbose-test", "vdelete"))) unwrap
+    self assert: resp status equals: 200
+    #{"x-verbose-test" => echoed} := self assertOk: resp bodyAsJson
+    self assert: echoed equals: "vdelete"
+
+  testInstanceGetHeaders =>
+    client := HTTPClient spawnWith: #{
+      #baseUrl => self.baseUrl,
+      #headers => #(#("x-client-header", "persistent"))
+    }
+    resp := (client get: "/echo-headers" headers: #(#("x-verbose-test", "iget"))) unwrap
+    parsed := self assertOk: resp bodyAsJson
+    #{"x-verbose-test" => echoed} := parsed
+    self assert: echoed equals: "iget"
+    self assert: (parsed at: "x-client-header" ifAbsent: [
+      "absent"
+    ]) equals: "absent"
+    self assert: client stop equals: #ok
+
+  testInstancePostHeadersBody =>
+    client := HTTPClient spawnWith: #{#baseUrl => self.baseUrl}
+    resp := (client
+      post: "/echo-headers"
+      headers: #(#("x-verbose-test", "ipost"))
+      body: "data") unwrap
+    #{"x-verbose-test" => echoed} := self assertOk: resp bodyAsJson
+    self assert: echoed equals: "ipost"
+    self assert: client stop equals: #ok
+
+  testInstancePutHeadersBody =>
+    client := HTTPClient spawnWith: #{#baseUrl => self.baseUrl}
+    resp := (client
+      put: "/echo-headers"
+      headers: #(#("x-verbose-test", "iput"))
+      body: "data") unwrap
+    #{"x-verbose-test" => echoed} := self assertOk: resp bodyAsJson
+    self assert: echoed equals: "iput"
+    self assert: client stop equals: #ok
+
+  testInstanceDeleteHeaders =>
+    client := HTTPClient spawnWith: #{#baseUrl => self.baseUrl}
+    resp := (client delete: "/echo-headers" headers: #(#("x-verbose-test", "idelete"))) unwrap
+    #{"x-verbose-test" => echoed} := self assertOk: resp bodyAsJson
+    self assert: echoed equals: "idelete"
+    self assert: client stop equals: #ok
+
   // ===== Custom headers =====
   testCustomHeaderSentInRequest =>
     resp := (HTTPClient
@@ -239,6 +350,38 @@ TestCase subclass: HTTPTest
     resp := (HTTPClient get: self.baseUrl ++ "/status/400") unwrap
     self assert: resp status equals: 400
     self deny: resp ok
+
+  // ===== maxBodyBytes option =====
+  testMaxBodyBytesAboveSizeReturnsOk =>
+    resp := (HTTPClient
+      request: #get
+      url: self.baseUrl ++ "/get"
+      options: #{#maxBodyBytes => 100000}) unwrap
+    self assert: resp status equals: 200
+
+  testMaxBodyBytesBelowSizeReturnsError =>
+    result := HTTPClient
+      request: #get
+      url: self.baseUrl ++ "/get"
+      options: #{#maxBodyBytes => 1}
+    self deny: result isOk
+
+  testMaxBodyBytesZeroReturnsError =>
+    result := HTTPClient
+      request: #get
+      url: self.baseUrl ++ "/get"
+      options: #{#maxBodyBytes => 0}
+    self deny: result isOk
+
+  testMaxBodyBytesNegativeRaisesTypeError =>
+    self
+      should: [
+        HTTPClient
+          request: #get
+          url: self.baseUrl ++ "/get"
+          options: #{#maxBodyBytes => -1}
+      ]
+      raise: #type_error
 
   // ===== Error cases =====
   testConnectionRefusedReturnsHttpError =>

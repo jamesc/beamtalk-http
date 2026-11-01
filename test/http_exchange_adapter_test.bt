@@ -195,6 +195,13 @@ TestCase subclass: HttpExchangeAdapterTest
     resp := (HTTPClient get: self baseUrl ++ "/") unwrap
     self assert: resp status equals: 500
 
+  testBodyTooLargePrefixRaiseBecomes500 =>
+    self.srv := self startBuccaneer: [:req |
+      Error signal: "body_too_large: not really"
+    ]
+    resp := (HTTPClient get: self baseUrl ++ "/") unwrap
+    self assert: resp status equals: 500
+
   testNonResponseBecomes500 =>
     self.srv := self startBuccaneer: [:req |
       (req path =:= "/nil") ifTrue: [nil] ifFalse: ["nope"]
@@ -463,6 +470,39 @@ TestCase subclass: HttpExchangeAdapterTest
     resp := (HTTPClient get: self baseUrl ++ "/unstarted") unwrap
     self assert: resp status equals: 500
 
+  testStreamDoubleStartCloses =>
+    self.srv := self
+      startBuccaneer: [:req |
+        HTTPResponse
+          streamWith: [:resp |
+            resp startChunked: 200 headers: #()
+            resp startChunked: 200 headers: #()
+            resp finish
+          ]
+      ]
+    raw := self rawGet: self.srv port path: "/double"
+    self assert: (raw startsWith: "HTTP/1.1 200")
+    self deny: (raw includesSubstring: "0\r\n\r\n")
+
+  testStreamChunkBeforeStartBecomes500 =>
+    self.srv := self
+      startBuccaneer: [:req |
+        HTTPResponse
+          streamWith: [:resp |
+            resp sendChunk: "early"
+            resp finish
+          ]
+      ]
+    resp := (HTTPClient get: self baseUrl ++ "/early") unwrap
+    self assert: resp status equals: 500
+
+  testFileMissingBecomes500 =>
+    self.srv := self startBuccaneer: [:req |
+      (HTTPResponse file: "test/fixtures/does-not-exist") withStatus: 200
+    ]
+    resp := (HTTPClient get: self baseUrl ++ "/missing-file") unwrap
+    self assert: resp status equals: 500
+
   testStreamRaiseAfterHeadersCloses =>
     self.srv := self
       startBuccaneer: [:req |
@@ -516,6 +556,22 @@ TestCase subclass: HttpExchangeAdapterTest
     big := "z" repeat: 9000000
     resp := (HTTPClient post: self baseUrl ++ "/big" body: big) unwrap
     self assert: resp status equals: 413
+
+  testPlugPreservesExchangeForInform =>
+    inner := [:req |
+      outcome := req inform: 103 headers: #()
+      HTTPResponse new: #{
+        #status => 200,
+        #body => (outcome isOk ifTrue: ["live"] ifFalse: ["dead"])
+      }
+    ]
+    composed := PlugChain chain: #((TaggingPlug tag: "A")) handler: inner
+    self.srv := self startBuccaneer: composed
+    resp := (HTTPClient get: self baseUrl ++ "/") unwrap
+    self assert: resp status equals: 200
+    // The in-tag stays in the request body (this handler never reads it);
+    // "live" proves the exchange survived the plug, "[A-out]" the wrap.
+    self assert: resp body equals: "live[A-out]"
 
   testReadChunkFromActorRaisesNotOwner =>
     self.srv := self startBuccaneer: ReadChunkProbe spawn

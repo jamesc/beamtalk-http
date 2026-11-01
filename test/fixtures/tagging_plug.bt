@@ -12,19 +12,10 @@ Value subclass: TaggingPlug
   class tag: t :: String -> TaggingPlug => self new: #{#tag => t}
 
   call: request :: HTTPRequest next: next :: Block(HTTPRequest, HTTPResponse) -> HTTPResponse =>
-    tagged := HTTPRequest
-      new: #{
-        #method => request method,
-        #path => request path,
-        #headers => request headers,
-        #body => request body asStringUnchecked ++ "[" ++ self.tag ++ "-in]",
-        #queryParams => request queryParams,
-        #params => request params
-      }
+    // A withBody: copy keeps every other field — notably #exchange, so
+    // body streaming still works downstream, and route #params.
+    tagged := request withBody: request body asStringUnchecked ++ "[" ++ self.tag ++ "-in]"
     response := next value: tagged
-    HTTPResponse
-      new: #{
-        #status => response status,
-        #headers => response headers,
-        #body => response body asStringUnchecked ++ "[" ++ self.tag ++ "-out]"
-      }
+    // A withBody: copy likewise keeps #stream / #file, so streaming and
+    // sendfile responses pass through untouched apart from the tag.
+    response withBody: response body asStringUnchecked ++ "[" ++ self.tag ++ "-out]"

@@ -10,7 +10,7 @@ Add the dependency to your `beamtalk.toml`:
 
 ```toml
 [dependencies]
-http = "0.1.0"
+http = "0.2.0"
 ```
 
 Then run:
