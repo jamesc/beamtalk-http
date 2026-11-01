@@ -293,21 +293,21 @@ TestCase subclass: HttpExchangeAdapterTest
       ] ifFalse: [orig =:= "buccaneer" ifTrue: [#buccaneer] ifFalse: [#cowboy]])
 
   testNibbleBounds =>
-    self assert: (HttpExchangeAdapter nibble: "0") equals: 0
-    self assert: (HttpExchangeAdapter nibble: "9") equals: 9
-    self assert: (HttpExchangeAdapter nibble: "a") equals: 10
-    self assert: (HttpExchangeAdapter nibble: "f") equals: 15
-    self assert: (HttpExchangeAdapter nibble: "A") equals: 10
-    self assert: (HttpExchangeAdapter nibble: "F") equals: 15
-    self assert: (HttpExchangeAdapter nibble: "g") isNil
+    self assert: (QueryParser nibble: "0") equals: 0
+    self assert: (QueryParser nibble: "9") equals: 9
+    self assert: (QueryParser nibble: "a") equals: 10
+    self assert: (QueryParser nibble: "f") equals: 15
+    self assert: (QueryParser nibble: "A") equals: 10
+    self assert: (QueryParser nibble: "F") equals: 15
+    self assert: (QueryParser nibble: "g") isNil
 
   testParseQueryDirect =>
-    q := HttpExchangeAdapter parseQuery: "a=1&b=&flag"
+    q := QueryParser parse: "a=1&b=&flag"
     self assert: (q at: "a") equals: "1"
     self assert: (q at: "b") equals: ""
     self assert: (q at: "flag") equals: "true"
-    self assert: (HttpExchangeAdapter parseQuery: "") equals: #{}
-    self assert: (HttpExchangeAdapter parseQuery: nil) equals: #{}
+    self assert: (QueryParser parse: "") equals: #{}
+    self assert: (QueryParser parse: nil) equals: #{}
 
   testClientDisconnectKeepsServing =>
     self.srv := self startBuccaneer: [:req |
