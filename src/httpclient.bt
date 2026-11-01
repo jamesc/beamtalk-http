@@ -1,6 +1,16 @@
 // Copyright 2026 James Casey
 // SPDX-License-Identifier: Apache-2.0
 
+/// The options `request:url:options:` and `request:path:options:` accept:
+/// Symbol keys with values checked at each use site. See the class-side
+/// `request:url:options:` for one bullet per key.
+type RequestOptions = Dictionary(Symbol, Dynamic)
+
+/// The `spawnWith:` config for a persistent client: Symbol keys with
+/// values checked at each use site. See `## Options` below for one bullet
+/// per key.
+type ClientOptions = Dictionary(Symbol, Dynamic)
+
 /// HTTPClient — actor-based HTTP client for one-shot and persistent requests.
 ///
 /// ## One-shot convenience methods (class-side)
@@ -28,6 +38,11 @@
 /// resp := (client post: "/post" body: "{}") unwrap
 /// client stop
 /// ```
+///
+/// ## Options
+/// - `#baseUrl` (String, required) — prepended to every relative path.
+/// - `#headers` (List of [name, value] pairs, default `#()`) — the actor defaults, replacing per request with `get:headers:` and friends.
+/// - `#timeout` (Integer, default `30000`) — the actor defaults in milliseconds, replacing per request with `request:path:options:`.
 ///
 /// @see HTTPServer (for serving HTTP requests)
 /// @see HTTPResponse (for response objects returned by requests)
@@ -107,20 +122,23 @@ Actor subclass: HTTPClient
 
   /// Perform a one-shot generic request (class method).
   ///
-  /// Options dict may contain:
-  ///   - `#headers` — List of [name, value] binary pairs
-  ///   - `#body`    — Request body String
-  ///   - `#timeout` — Timeout in milliseconds (default 30000)
-  ///   - `#maxBodyBytes` — Cap on the response body in bytes: larger
-  ///     bodies answer `Result error:` without materialising in memory
-  ///     (default `unlimited`)
+  /// ## Arguments
+  /// - `method` (Symbol | String) — the HTTP method (`#patch` or `"PATCH"`).
+  /// - `url` (String) — the full URL to request.
+  /// - `opts` (RequestOptions) — the request options, one entry per key below.
+  ///
+  /// ## Options
+  /// - `#headers` (List of [name, value] pairs, default `#()`) — request headers.
+  /// - `#body` (String, default empty) — request body.
+  /// - `#timeout` (Integer, default `30000`) — timeout in milliseconds.
+  /// - `#maxBodyBytes` (Integer | `#unlimited`, default `unlimited`) — cap on the response body in bytes: larger bodies answer `Result error:` without materialising in memory.
   ///
   /// ## Examples
   /// ```beamtalk
   /// resp := HTTPClient request: #patch url: "https://httpbin.org/patch"
   ///   options: #{#body => "{}", #timeout => 5000}
   /// ```
-  class request: method :: Symbol | String url: url :: String options: opts :: Dictionary(Symbol, Dynamic) -> Result(HTTPResponse, Exception) =>
+  class request: method :: Symbol | String url: url :: String options: opts :: RequestOptions -> Result(HTTPResponse, Exception) =>
     (Erlang beamtalk_http)
       request: method
       url: url
@@ -230,19 +248,21 @@ Actor subclass: HTTPClient
 
   /// Perform a generic request using the stored base URL.
   ///
-  /// The `method` may be a Symbol (e.g. `#patch`) or a String (e.g. `"PATCH"`).
-  /// `opts` is a Dictionary with optional keys:
-  ///   - `#headers` — request headers (overrides actor defaults)
-  ///   - `#body`    — request body String
-  ///   - `#timeout` — per-request timeout in milliseconds
-  ///   - `#maxBodyBytes` — cap on the response body in bytes (default `unlimited`)
+  /// ## Arguments
+  /// - `method` (Symbol | String) — the HTTP method (`#patch` or `"PATCH"`).
+  /// - `path` (String) — the relative path; the stored base URL is prepended.
+  /// - `opts` (RequestOptions) — the request options, merged over the actor defaults (`#headers`, `#timeout`).
+  ///
+  /// ## Options
+  /// The same request options as the class-side `request:url:options:`; see
+  /// it for one bullet per key.
   ///
   /// ## Examples
   /// ```beamtalk
   /// resp := client request: #patch path: "/patch" options: #{#body => "{}"}
   /// resp ok   // => true
   /// ```
-  request: method :: Symbol | String path: path :: String options: opts :: Dictionary(Symbol, Dynamic) -> Result(HTTPResponse, Exception) =>
+  request: method :: Symbol | String path: path :: String options: opts :: RequestOptions -> Result(HTTPResponse, Exception) =>
     url := self.baseUrl ++ path
     defaults := #{#headers => self.headers, #timeout => self.timeout}
     (Erlang beamtalk_http)
