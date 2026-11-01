@@ -157,6 +157,15 @@ TestCase subclass: HTTPTest
     #{"body" => body} := self assertOk: resp bodyAsJson
     self assert: body equals: "payload"
 
+  testDocumentedRequestOptions =>
+    // Mirrors the `request:url:options:` doc example's option keys
+    // (`#body`, `#timeout`) against the local test server.
+    resp := (HTTPClient
+      request: #post
+      url: self.baseUrl ++ "/post"
+      options: #{#body => "payload", #timeout => 5000}) unwrap
+    self assert: resp status equals: 200
+
   // ===== HTTPClient instance — get: =====
   testInstanceGetReturns200 =>
     client := HTTPClient spawnWith: #{#baseUrl => self.baseUrl}
