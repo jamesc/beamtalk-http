@@ -1,0 +1,53 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// HTTPBuccaneerServer — beamtalk-http's Buccaneer backend.
+///
+/// Owns a `Buccaneer` server the way `HTTPServer`'s native side owns a
+/// cowboy listener. Started through `HTTPServer` with
+/// `#backend => #buccaneer`; answers the same `port`, `stop` and
+/// `printString` shapes so the server suite runs unchanged on both
+/// backends.
+Actor subclass: HTTPBuccaneerServer
+  state: port :: Integer = 0
+  state: handler = nil
+  state: bind :: String = "127.0.0.1"
+  state: server = nil
+  // Untyped: `listenerInfo` answers `{ip, port}` with the port as
+  // `Integer | Binary` (Binary only for Unix sockets, which never bind
+  // here); at runtime this is always the Integer port.
+  state: actualPort = 0
+
+  initialize =>
+    h := self.handler
+    ((h isKindOf: Block) or: [
+      (h isKindOf: HTTPRouter) or: [h respondsTo: #handle:]
+    ])
+      ifFalse: [
+        Error signal: "Invalid HTTP handler; expected a block, HTTPRouter or handle: actor"
+      ]
+    srv := (Buccaneer
+      start: #{
+        #port => self.port,
+        #ip => (HttpExchangeAdapter parseBindIp: self.bind),
+        #startupLog => false,
+        #handler => [:ex | HttpExchangeAdapter serve: ex handler: h]
+      }) unwrap
+    self.server := srv
+    self.actualPort := (srv listenerInfo unwrap) at: 2
+    nil
+
+  /// The bound port (ephemeral when started with port 0), like
+  /// `HTTPServer>>port`.
+  port -> Integer => self.actualPort
+
+  printString -> String =>
+    "an HTTPServer(port: " ++ self.actualPort asString ++ ")"
+
+  /// Guarded like the native backend's catch-all stop: the engine may
+  /// already be gone (crash, OOM-killer), and shutdown must not raise.
+  terminate: _reason :: Object -> Nil =>
+    self.server isNil ifFalse: [
+      [self.server stop: 5000] on: Exception do: [:e | nil]
+    ]
+    nil

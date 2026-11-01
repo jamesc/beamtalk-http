@@ -57,6 +57,35 @@ srv port   // => 8080
 srv stop
 ```
 
+### Backend selection
+
+The server runs on cowboy by default. Pass `#backend => #buccaneer`
+(or export `BEAMTALK_HTTP_BACKEND=buccaneer`) to serve through the
+pure-Beamtalk engine instead — the same handler, router, and test suite
+run unchanged on both:
+
+```beamtalk
+srv := HTTPServer start: 0
+  handler: router
+  options: #{ #backend => #buccaneer }
+```
+
+Known differences on the buccaneer backend:
+
+- Request bodies are capped at 8 MB (larger ones answer 413);
+  cowboy reads unbounded bodies.
+- `#bind` takes an IPv4 address only (`inet:parse_address`-style
+  IPv6 works on cowboy).
+- No interim `100-continue` is sent (engine Phase 3): clients that
+  wait for one hit the read timeout instead of getting a status.
+- Malformed percent-encoding in the query and malformed chunk framing
+  answer 400 (cowboy crashes those requests into a 500).
+- The handler is validated at start on both backends, matching
+  cowboy's rule: a block, an `HTTPRouter`, or an actor responding to
+  `handle:`.
+
+CI runs the suite on both backends; see `.github/workflows/ci.yml`.
+
 ### HTTP Router
 
 ```beamtalk
@@ -101,7 +130,8 @@ Plug that needs live, mutable actor state.
 visibility:
 
 - **Block or `HTTPRouter`-compiled route** — invoked directly as a plain
-  function call in cowboy's own request-handling process. Any `self.field`
+  function call in the backend's request-handling process (cowboy's
+  process, or the connection process on buccaneer). Any `self.field`
   the block closes over is whatever was captured when the block/route
   table was built; it is never re-read, even if the underlying actor's
   state changes later (including `attachX:`-style dependency injection
@@ -120,7 +150,7 @@ state.
 | Class | Description |
 |-------|-------------|
 | `HTTPClient` | Actor-based HTTP client for one-shot and persistent requests |
-| `HTTPServer` | Cowboy-backed HTTP server actor |
+| `HTTPServer` | HTTP server actor (cowboy default, buccaneer optional) |
 | `HTTPRequest` | Incoming HTTP request representation |
 | `HTTPResponse` | HTTP response builder |
 | `HTTPRouter` | URL routing with method-based dispatch |

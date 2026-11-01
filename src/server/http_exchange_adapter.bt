@@ -1,0 +1,200 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// HttpExchangeAdapter — maps Buccaneer's engine interface onto
+/// beamtalk-http's `HTTPRequest` / `HTTPResponse`.
+///
+/// Runs inside the connection process: builds an `HTTPRequest` from the
+/// `Exchange` (reading the whole body first, as the cowboy backend does),
+/// dispatches to a block, an `HTTPHandler` actor or an `HTTPRouter`, and
+/// answers with `sendResp:`. Behaviour differences from cowboy are noted
+/// in the README.
+Object subclass: HttpExchangeAdapter
+
+  /// Largest request body read before running the handler (8 MB, as
+  /// Bandit). Larger bodies answer 413.
+  class maxBodyBytes -> Integer => 8000000
+
+  /// Serve one request: build the `HTTPRequest`, dispatch, send the
+  /// `HTTPResponse`. Answers 400 for a request the handler must never
+  /// see (non-UTF-8 header value or query part, malformed body framing),
+  /// 413 for an over-large body, and 500 for anything else — a raise in
+  /// the handler or a non-`HTTPResponse` answer included, as the cowboy
+  /// backend does. The engine strips HEAD/204/304 bodies itself; it
+  /// sends no interim 100-continue (engine Phase 3), so a client that
+  /// waits for one hits the read timeout instead.
+  ///
+  /// Engine errors pass through untouched: `TransportError` (dead
+  /// socket) and `HTTPError` (protocol problems the pipeline maps to a
+  /// status itself) must reach the engine's own error paths, not the
+  /// 500 below.
+  class serve: ex :: Exchange handler: handler -> Object =>
+    [self respond: ex handler: handler]
+      on: Exception
+      do: [:e |
+        ((e isKindOf: TransportError) or: [
+          e isKindOf: HTTPError
+        ]) ifTrue: [e pass]
+        Logger error: ("HTTP handler failed: " ++ e printString) metadata: #{
+          #domain => #(#http)
+        }
+        self send500: ex
+      ]
+
+  class respond: ex :: Exchange handler: handler -> Object =>
+    query := QueryParser parse: ex query
+    query isNil ifTrue: [^self send400: ex reason: "invalid UTF-8 in query"]
+    headers := self requestHeaders: ex headers
+    headers isNil ifTrue: [^self send400: ex reason: "invalid UTF-8 in header"]
+    body := self readBody: ex
+    body isNil ifTrue: [^nil]
+    req := HTTPRequest
+      new: #{
+        #method => ex method,
+        #path => ex path,
+        #headers => headers,
+        #body => body,
+        #queryParams => query,
+        #params => #{}
+      }
+    resp := self dispatch: handler request: req
+    (resp isKindOf: HTTPResponse) ifFalse: [^self send500: ex]
+    ex
+      sendResp: resp status
+      headers: (self responseHeaders: resp headers)
+      body: resp body
+
+  /// Dispatch to a block, an `HTTPHandler` actor (a real actor send, as
+  /// the cowboy backend does) or an `HTTPRouter`. The router matcher
+  /// stays native, shared with the cowboy backend.
+  class dispatch: handler request: req :: HTTPRequest -> Object =>
+    (handler isKindOf: Block) ifTrue: [^handler value: req]
+    (handler isKindOf: HTTPRouter) ifTrue: [
+      ^self dispatchRouter: handler request: req
+    ]
+    handler handle: req
+
+  class dispatchRouter: router :: HTTPRouter request: req :: HTTPRequest -> Object =>
+    matched := router match: req method path: req path
+    matched =:= #method_not_allowed
+      ifTrue: [
+        ^HTTPResponse
+          new: #{
+            #status => 405,
+            #headers => #(#("content-type", "text/plain")),
+            #body => "Method Not Allowed"
+          }
+      ]
+    matched =:= #not_found
+      ifTrue: [
+        nf := router notFoundHandler
+        nf isNil
+          ifTrue: [
+            ^HTTPResponse
+              new: #{
+                #status => 404,
+                #headers => #(#("content-type", "text/plain")),
+                #body => "Not Found"
+              }
+          ]
+        ^nf value: req
+      ]
+    {_, h, p} := matched
+    h value: (req withParams: p)
+
+  /// Engine header tuples to `HTTPRequest` pairs. Names are lowercase
+  /// Strings by the time the engine hands them over; values may be
+  /// opaque Binaries, which cowboy would reject — answer nil so the
+  /// caller sends 400 without running the handler.
+  class requestHeaders: headers -> List(List(String)) | Nil =>
+    out := #()
+    headers
+      do: [:t |
+        name := t at: 1
+        value := t at: 2
+        (name isKindOf: String) ifFalse: [^nil]
+        text := self headerValueText: value
+        text isNil ifTrue: [^nil]
+        out := out add: #(name, text)
+      ]
+    out
+
+  /// A header value to text: Strings pass through, Binaries must be
+  /// valid UTF-8 (nil otherwise, so the caller answers 400).
+  class headerValueText: value -> String | Nil =>
+    (value isKindOf: String) ifTrue: [^value]
+    converted := value asString
+    converted isError ifTrue: [^nil]
+    converted value
+
+  /// The whole body, as the cowboy backend reads it before dispatch: a
+  /// String when valid UTF-8, a Binary otherwise. Answers nil after
+  /// sending 400 (malformed framing — the engine raises `HTTPError`
+  /// for those, documented there as "a 400") or 413 (over-large body).
+  /// A dead socket signals `TransportError` so the engine takes its
+  /// quiet transport-error path instead of a 500; anything else raises.
+  class readBody: ex :: Exchange -> String | Binary | Nil =>
+    read := [ex readAll: self maxBodyBytes]
+      on: HTTPError
+      do: [:e |
+        self send400: ex reason: "malformed request body"
+        nil
+      ]
+    read isNil ifTrue: [^nil]
+    read isError
+      ifTrue: [
+        read error =:= #body_too_large ifTrue: [^self send413: ex]
+        read error =:= #closed ifTrue: [
+          TransportError signal: "client closed connection during body read"
+        ]
+        Error signal: ("Request body read failed: " ++ read error printString)
+      ]
+    data := read value
+    (data isKindOf: String) ifTrue: [^data]
+    converted := data asString
+    converted isError ifTrue: [^data]
+    converted value
+
+  /// `HTTPResponse` header pairs to engine tuples.
+  class responseHeaders: headers :: List(List(String)) -> List(Tuple) =>
+    headers collect: [:pair | {(pair at: 1), (pair at: 2)}]
+
+  /// An IPv4 `#bind` address to the `{ip, ...}` tuple Catalina's
+  /// transport options take. Raises like the cowboy backend does for
+  /// anything that is not a dotted quad.
+  class parseBindIp: bind :: String -> Tuple =>
+    parts := bind split: "."
+    parts size =:= 4 ifFalse: [
+      Error signal: "Bind must be an IPv4 address (e.g. 127.0.0.1)"
+    ]
+    octets := parts collect: [:p | self parseOctet: p]
+    {(octets at: 1), (octets at: 2), (octets at: 3), (octets at: 4)}
+
+  class parseOctet: s :: String -> Integer =>
+    n := [
+      s asInteger
+    ] on: Exception do: [:e |
+      Error signal: "Bind must be an IPv4 address (e.g. 127.0.0.1)"
+    ]
+    (n < 0 or: [
+      n > 255
+    ]) ifTrue: [Error signal: "Bind must be an IPv4 address (e.g. 127.0.0.1)"]
+    n
+
+  class send400: ex :: Exchange reason: why :: String -> Object =>
+    ex
+      sendResp: 400
+      headers: #({"content-type", "text/plain"})
+      body: ("Bad Request: " ++ why)
+
+  class send413: ex :: Exchange -> Object =>
+    ex
+      sendResp: 413
+      headers: #({"content-type", "text/plain"})
+      body: "Request Entity Too Large"
+
+  class send500: ex :: Exchange -> Object =>
+    ex
+      sendResp: 500
+      headers: #({"content-type", "text/plain"})
+      body: "Internal Server Error"

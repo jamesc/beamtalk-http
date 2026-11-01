@@ -1,0 +1,69 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// QueryParser — decodes a raw HTTP query string into parameters.
+///
+/// Plug-layer parsing (the `fetch_query_params` half of the split with
+/// the engine): the engine hands over the raw query string and this
+/// answers the `Dictionary` behind `HTTPRequest>>queryParams`. Kept as
+/// its own stateless unit so any backend adapter maps the same way.
+Object subclass: QueryParser
+
+  /// Raw query string to parameters, with cowboy's rules: `?flag`
+  /// means `"true"`, `+` is a space, `%XX` decodes a byte, and empty
+  /// segments (a trailing or doubled `&`) are skipped. Answers nil
+  /// when a part is not valid UTF-8 — the cowboy backend crashes on
+  /// those (a 500), so a nil here (which the caller turns into a 400)
+  /// is the deliberate friendlier shape.
+  class parse: query :: String | Nil -> Dictionary(String, String) | Nil =>
+    query isNil ifTrue: [^#{}]
+    query =:= "" ifTrue: [^#{}]
+    out := Dictionary new
+    parts := (query split: "&") reject: [:part | part isEmpty]
+    parts
+      do: [:part |
+        idx := part indexOf: "="
+        key := self decodePart: (idx isNil ifTrue: [
+          part
+        ] ifFalse: [part take: idx - 1])
+        val := idx isNil ifTrue: [
+          "true"
+        ] ifFalse: [self decodePart: (part drop: idx)]
+        (key isNil or: [val isNil]) ifTrue: [^nil]
+        out := out at: key put: val
+      ]
+    out
+
+  class decodePart: s :: String -> String | Nil => self decodePart: s into: ""
+
+  class decodePart: rest :: String into: out :: String -> String | Nil =>
+    rest isEmpty ifTrue: [^out]
+    ch := rest at: 1
+    ch =:= "+" ifTrue: [^self decodePart: (rest drop: 1) into: out ++ " "]
+    ch =:= "%" ifFalse: [^self decodePart: (rest drop: 1) into: out ++ ch]
+    run := self percentRun: rest into: #()
+    run isNil ifTrue: [^nil]
+    rest := run at: 2
+    decoded := (Binary fromBytes: (run at: 1)) asString
+    decoded isError ifTrue: [^nil]
+    self decodePart: rest into: out ++ decoded value
+
+  /// Consume all contiguous `%XX` groups at the head of `s`: answers
+  /// `{bytes, rest}` or nil on a short or non-hex group.
+  class percentRun: s :: String -> Tuple(List(Integer), String) | Nil =>
+    self percentRun: s into: #()
+
+  class percentRun: rest :: String into: bytes :: List(Integer) -> Tuple(List(Integer), String) | Nil =>
+    ((rest size >= 3) and: [
+      (rest at: 1) =:= "%"
+    ]) ifFalse: [^bytes isEmpty ifTrue: [nil] ifFalse: [{bytes, rest}]]
+    hi := self nibble: (rest at: 2)
+    lo := self nibble: (rest at: 3)
+    (hi isNil or: [lo isNil]) ifTrue: [^nil]
+    self percentRun: (rest drop: 3) into: (bytes add: hi * 16 + lo)
+
+  class nibble: ch :: String -> Integer | Nil =>
+    pos := "0123456789ABCDEFabcdef" indexOf: ch
+    pos isNil ifTrue: [^nil]
+    pos <= 16 ifTrue: [^pos - 1]
+    pos - 7

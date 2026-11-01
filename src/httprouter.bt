@@ -116,6 +116,17 @@ sealed Value subclass: HTTPRouter
         #routeCount => routeArray size
       }
 
+  /// Match a method and path against this router's compiled routes.
+  ///
+  /// Answers `{ok, handler, params}`, `#method_not_allowed` or
+  /// `#not_found`. Internal plumbing for the server backends — the
+  /// matcher itself stays native until Phase 8.
+  match: method :: String path: path :: String -> Object =>
+    (Erlang beamtalk_http_router)
+      match: self compiledRoutes
+      with: method
+      with: path
+
   /// Human-readable representation: "an HTTPRouter(6 routes)".
   printString -> String =>
     "an HTTPRouter(" ++ self.routeCount printString ++ " routes)"

@@ -1,0 +1,344 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// Edge cases for the buccaneer backend that the shared server suite
+/// does not hit: mapping details (duplicate headers, query shapes,
+/// chunked and 100-continue bodies, non-UTF-8 bodies), failure paths
+/// (raise, non-response, over-large body) and backend plumbing
+/// (router dispatch, actor handlers, `#bind`, backend selection).
+/// Every test pins `#backend => #buccaneer` explicitly, so this file
+/// behaves identically with and without `BEAMTALK_HTTP_BACKEND` set.
+TestCase subclass: HttpExchangeAdapterTest
+  field: srv = nil
+
+  tearDown =>
+    self.srv isNil ifFalse: [self.srv stop]
+    self.srv := nil
+
+  startBuccaneer: handler =>
+    HTTPServer
+      start: 0
+      handler: handler
+      options: #{#backend => #buccaneer}
+
+  startBuccaneer: handler options: extra =>
+    HTTPServer
+      start: 0
+      handler: handler
+      options: (#{#backend => #buccaneer} merge: extra)
+
+  baseUrl => "http://localhost:" ++ self.srv port asString
+
+  testDuplicateHeadersKeptSeparate =>
+    self.srv := self
+      startBuccaneer: [:req |
+        wanted := req headers select: [:pair | (pair at: 1) =:= "x-foo"]
+        HTTPResponse new: #{
+          #status => 200,
+          #body => (wanted collect: [:pair | pair at: 2]) join: ","
+        }
+      ]
+    resp := (HTTPClient
+      request: #get
+      url: self baseUrl ++ "/dup"
+      options: #{#headers => #(#("x-foo", "1"), #("x-foo", "2"))}) unwrap
+    self assert: resp status equals: 200
+    self assert: resp body equals: "1,2"
+
+  testHeadHasNoBody =>
+    self.srv := self startBuccaneer: [:req |
+      HTTPResponse new: #{#status => 200, #body => "hi"}
+    ]
+    resp := (HTTPClient
+      request: #head
+      url: self baseUrl ++ "/"
+      options: #{}) unwrap
+    self assert: resp status equals: 200
+    self assert: (resp body asStringUnchecked) equals: ""
+
+  testChunkedRequestBody =>
+    self.srv := self
+      startBuccaneer: [:req |
+        HTTPResponse new: #{
+          #status => 200,
+          #body => "got:" ++ req body asStringUnchecked
+        }
+      ]
+    raw := self
+      rawPost: self.srv port
+      path: "/chunked"
+      headers: "transfer-encoding: chunked\r\n"
+      body: "5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n"
+    self assert: (raw includesSubstring: "200 OK")
+    self assert: (raw includesSubstring: "got:hello world")
+
+  test100Continue =>
+    self.srv := self
+      startBuccaneer: [:req |
+        HTTPResponse new: #{
+          #status => 200,
+          #body => "got:" ++ req body asStringUnchecked
+        }
+      ]
+    port := self.srv port
+    client := ((Erlang gen_tcp)
+      connect: {127, 0, 0, 1}
+      with: port
+      with: #(#binary, {#packet, #raw}, {#active, #false})) unwrap
+    (Erlang gen_tcp) send: client with: "POST /echo100 HTTP/1.1\r\nhost: x\r\ncontent-length: 5\r\nexpect: 100-continue\r\nconnection: close\r\n\r\n"
+    interim := (Erlang gen_tcp)
+      recv: client
+      with: 0
+      with: 500
+    interim isError ifFalse: [
+      self assert: (interim value asStringUnchecked startsWith: "HTTP/1.1 100")
+    ]
+    (Erlang gen_tcp) send: client with: "hello"
+    final := ((Erlang gen_tcp)
+      recv: client
+      with: 0
+      with: 3000) unwrap
+    (Erlang gen_tcp) close: client
+    self assert: (final asStringUnchecked includesSubstring: "200 OK")
+    self assert: (final asStringUnchecked includesSubstring: "got:hello")
+
+  testFlagQueryParam =>
+    self.srv := self
+      startBuccaneer: [:req |
+        HTTPResponse
+          new: #{
+            #status => 200,
+            #body => (req queryParams at: "q") ++ "," ++ (req queryParams at: "flag")
+          }
+      ]
+    resp := (HTTPClient get: self baseUrl ++ "/search?q=x&flag") unwrap
+    self assert: resp body equals: "x,true"
+
+  testEncodedQueryParam =>
+    self.srv := self
+      startBuccaneer: [:req |
+        HTTPResponse new: #{#status => 200, #body => req queryParams at: "name"}
+      ]
+    resp := (HTTPClient get: self baseUrl ++ "/?name=%41%42+%43") unwrap
+    self assert: resp body equals: "AB C"
+
+  testLowercaseHexQueryParam =>
+    self.srv := self
+      startBuccaneer: [:req |
+        HTTPResponse new: #{#status => 200, #body => req queryParams at: "name"}
+      ]
+    resp := (HTTPClient get: self baseUrl ++ "/?name=%2f%41") unwrap
+    self assert: resp body equals: "/A"
+
+  testMalformedQueryBecomes400 =>
+    self.srv := self startBuccaneer: [:req |
+      HTTPResponse new: #{#status => 200, #body => "unreached"}
+    ]
+    badHex := (HTTPClient get: self baseUrl ++ "/?name=%zz") unwrap
+    self assert: badHex status equals: 400
+    trailing := (HTTPClient get: self baseUrl ++ "/?name=%") unwrap
+    self assert: trailing status equals: 400
+
+  testEmptyQuerySegmentsSkipped =>
+    self.srv := self
+      startBuccaneer: [:req |
+        HTTPResponse
+          new: #{#status => 200, #body => (req queryParams at: "a")
+              ++ ","
+              ++ (req queryParams at: "b")
+              ++ ","
+              ++ (req queryParams at: "" ifAbsent: ["absent"])}
+      ]
+    resp := (HTTPClient get: self baseUrl ++ "/?a=1&&b=2&") unwrap
+    self assert: resp body equals: "1,2,absent"
+
+  testMalformedChunkedBodyBecomes400 =>
+    self.srv := self startBuccaneer: [:req |
+      HTTPResponse new: #{#status => 200, #body => "unreached"}
+    ]
+    raw := self
+      rawPost: self.srv port
+      path: "/bad"
+      headers: "transfer-encoding: chunked\r\n"
+      body: "ZZZ\r\nhello\r\n0\r\n\r\n"
+    self assert: (raw includesSubstring: "400")
+
+  testBodyLimitBoundary =>
+    self.srv := self startBuccaneer: [:req |
+      HTTPResponse new: #{#status => 200, #body => "got it"}
+    ]
+    exact := (HTTPClient post: self baseUrl ++ "/" body: ("x" repeat: 8000000)) unwrap
+    self assert: exact status equals: 200
+    over := (HTTPClient post: self baseUrl ++ "/" body: ("x" repeat: 8000001)) unwrap
+    self assert: over status equals: 413
+
+  testNonUtf8BodyStaysBinary =>
+    self.srv := self
+      startBuccaneer: [:req |
+        HTTPResponse
+          new: #{
+            #status => 200,
+            #body => ((req body isKindOf: Binary) ifTrue: [
+              "binary"
+            ] ifFalse: ["string"])
+          }
+      ]
+    raw := self
+      rawPost: self.srv port
+      path: "/bin"
+      headers: "content-length: 2\r\n"
+      body: (Binary fromBytes: #(255, 254))
+    self assert: (raw includesSubstring: "binary")
+
+  testRaiseBecomes500 =>
+    self.srv := self startBuccaneer: [:req | Error signal: "boom"]
+    resp := (HTTPClient get: self baseUrl ++ "/") unwrap
+    self assert: resp status equals: 500
+
+  testNonResponseBecomes500 =>
+    self.srv := self startBuccaneer: [:req |
+      (req path =:= "/nil") ifTrue: [nil] ifFalse: ["nope"]
+    ]
+    stringResp := (HTTPClient get: self baseUrl ++ "/string") unwrap
+    self assert: stringResp status equals: 500
+    nilResp := (HTTPClient get: self baseUrl ++ "/nil") unwrap
+    self assert: nilResp status equals: 500
+
+  testBodyTooLargeBecomes413 =>
+    self.srv := self startBuccaneer: [:req |
+      HTTPResponse new: #{#status => 200, #body => "unreached"}
+    ]
+    big := "x" repeat: 9 * 1024 * 1024
+    resp := (HTTPClient post: self baseUrl ++ "/" body: big) unwrap
+    self assert: resp status equals: 413
+
+  testActorHandler =>
+    self.srv := self startBuccaneer: EchoActor spawn
+    resp := (HTTPClient post: self baseUrl ++ "/" body: "hi") unwrap
+    self assert: resp status equals: 200
+    self assert: resp body equals: "POST"
+
+  testRouterDispatch =>
+    router := HTTPRouter
+      routes: #(HTTPRoute
+        get: "/users/:id"
+        handler: [:req |
+          HTTPResponse new: #{
+            #status => 200,
+            #body => "user:" ++ (req params at: "id")
+          }
+        ])
+    self.srv := self startBuccaneer: router
+    okResp := (HTTPClient get: self baseUrl ++ "/users/42") unwrap
+    self assert: okResp body equals: "user:42"
+    missingResp := (HTTPClient get: self baseUrl ++ "/missing") unwrap
+    self assert: missingResp status equals: 404
+    methodResp := (HTTPClient post: self baseUrl ++ "/users/42" body: "") unwrap
+    self assert: methodResp status equals: 405
+
+  testBindOption =>
+    self.srv := self startBuccaneer: [:req |
+      HTTPResponse new: #{#status => 200, #body => "bound"}
+    ] options: #{#bind => "127.0.0.1"}
+    resp := (HTTPClient get: self baseUrl ++ "/") unwrap
+    self assert: resp body equals: "bound"
+
+  testUnknownBackendRaises =>
+    outcome := Result
+      tryDo: [
+        HTTPServer
+          start: 0
+          handler: [:req | nil]
+          options: #{#backend => #bogus}
+      ]
+    self assert: outcome isError
+
+  testInvalidBindRaises =>
+    outcome := Result
+      tryDo: [
+        HTTPServer
+          start: 0
+          handler: [:req | nil]
+          options: #{#backend => #buccaneer, #bind => "not-an-ip"}
+      ]
+    self assert: outcome isError
+
+  testInvalidHandlerRaises =>
+    garbage := Result tryDo: [self startBuccaneer: "oops"]
+    self assert: garbage isError
+    nilHandler := Result tryDo: [self startBuccaneer: nil]
+    self assert: nilHandler isError
+
+  testResolveBackendMatrix =>
+    orig := System getEnv: "BEAMTALK_HTTP_BACKEND"
+    System setEnv: "BEAMTALK_HTTP_BACKEND" value: "buccaneer"
+    fromEnv := HTTPServer resolveBackend: #{}
+    System setEnv: "BEAMTALK_HTTP_BACKEND" value: "bogus"
+    bogusOutcome := Result tryDo: [HTTPServer resolveBackend: #{}]
+    System setEnv: "BEAMTALK_HTTP_BACKEND" value: ""
+    emptyEnv := HTTPServer resolveBackend: #{}
+    System setEnv: "BEAMTALK_HTTP_BACKEND" value: (orig isNil ifTrue: [
+      ""
+    ] ifFalse: [orig])
+    self assert: fromEnv equals: #buccaneer
+    self assert: bogusOutcome isError
+    self assert: emptyEnv equals: #cowboy
+    self assert: (HTTPServer resolveBackend: #{
+      #backend => #cowboy
+    }) equals: #cowboy
+    self
+      assert: (HTTPServer resolveBackend: #{})
+      equals: (orig isNil ifTrue: [
+        #cowboy
+      ] ifFalse: [orig =:= "buccaneer" ifTrue: [#buccaneer] ifFalse: [#cowboy]])
+
+  testNibbleBounds =>
+    self assert: (QueryParser nibble: "0") equals: 0
+    self assert: (QueryParser nibble: "9") equals: 9
+    self assert: (QueryParser nibble: "a") equals: 10
+    self assert: (QueryParser nibble: "f") equals: 15
+    self assert: (QueryParser nibble: "A") equals: 10
+    self assert: (QueryParser nibble: "F") equals: 15
+    self assert: (QueryParser nibble: "g") isNil
+
+  testParseQueryDirect =>
+    q := QueryParser parse: "a=1&b=&flag"
+    self assert: (q at: "a") equals: "1"
+    self assert: (q at: "b") equals: ""
+    self assert: (q at: "flag") equals: "true"
+    self assert: (QueryParser parse: "") equals: #{}
+    self assert: (QueryParser parse: nil) equals: #{}
+
+  testClientDisconnectKeepsServing =>
+    self.srv := self startBuccaneer: [:req |
+      HTTPResponse new: #{#status => 200, #body => "alive"}
+    ]
+    port := self.srv port
+    client := ((Erlang gen_tcp)
+      connect: {127, 0, 0, 1}
+      with: port
+      with: #(#binary, {#packet, #raw}, {#active, #false})) unwrap
+    (Erlang gen_tcp) send: client with: "POST /gone HTTP/1.1\r\nhost: x\r\ncontent-length: 100\r\nconnection: close\r\n\r\npartial"
+    (Erlang gen_tcp) close: client
+    resp := (HTTPClient get: self baseUrl ++ "/") unwrap
+    self assert: resp body equals: "alive"
+
+  rawPost: port path: path headers: headerLines body: body =>
+    client := ((Erlang gen_tcp)
+      connect: {127, 0, 0, 1}
+      with: port
+      with: #(#binary, {#packet, #raw}, {#active, #false})) unwrap
+    (Erlang gen_tcp)
+      send: client
+      with: "POST "
+        ++ path
+        ++ " HTTP/1.1\r\nhost: x\r\n"
+        ++ headerLines
+        ++ "connection: close\r\n\r\n"
+    (Erlang gen_tcp) send: client with: body
+    raw := ((Erlang gen_tcp)
+      recv: client
+      with: 0
+      with: 3000) unwrap
+    (Erlang gen_tcp) close: client
+    raw asStringUnchecked
