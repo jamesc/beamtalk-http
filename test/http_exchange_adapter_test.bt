@@ -287,7 +287,23 @@ TestCase subclass: HttpExchangeAdapterTest
     self assert: (mapped at: 1) equals: {0, 0, 0, 0, 0, 65535, 258, 772}
     zeros := HttpExchangeAdapter parseBind: "::"
     self assert: (zeros at: 1) equals: {0, 0, 0, 0, 0, 0, 0, 0}
-    bad := #("1.2.3.4.5", "1::2::3", "gggg::1", "1:2:3:4:5:6:7::8", "12345::", "not-an-ip")
+    // OTP edge parity (BT-4324): uppercase hex, embedded v4, leading
+    // zeros, and zone suffixes parse; empty, triple colons, and
+    // padded input raise. Note the zone delta: the old manual parser
+    // rejected zones, while inet:parse_address (like cowboy) accepts
+    // them and answers the bare address.
+    upper := HttpExchangeAdapter parseBind: "FE80::1"
+    self assert: (upper at: 1) equals: {65152, 0, 0, 0, 0, 0, 0, 1}
+    self assert: (upper at: 2) equals: true
+    tail := HttpExchangeAdapter parseBind: "::1.2.3.4"
+    self assert: (tail at: 1) equals: {0, 0, 0, 0, 0, 0, 258, 772}
+    padded := HttpExchangeAdapter parseBind: "001.002.003.004"
+    self assert: (padded at: 1) equals: {1, 2, 3, 4}
+    self assert: (padded at: 2) equals: false
+    zoned := HttpExchangeAdapter parseBind: "fe80::1%eth0"
+    self assert: (zoned at: 1) equals: {65152, 0, 0, 0, 0, 0, 0, 1}
+    self assert: (zoned at: 2) equals: true
+    bad := #("1.2.3.4.5", "1::2::3", "gggg::1", "1:2:3:4:5:6:7::8", "12345::", "not-an-ip", "", "1:::2", "127.0.0.1 ")
     bad
       do: [:each |
         self assert: (Result tryDo: [
