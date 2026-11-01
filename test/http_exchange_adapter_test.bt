@@ -253,6 +253,58 @@ TestCase subclass: HttpExchangeAdapterTest
       ]
     self assert: outcome isError
 
+  testPortInUseRaises =>
+    self.srv := self startBuccaneer: [:req |
+      HTTPResponse new: #{#status => 200, #body => "ok"}
+    ]
+    used := self.srv port
+    clash := Result
+      tryDo: [
+        HTTPServer
+          start: used
+          handler: [:req | HTTPResponse new: #{#status => 200, #body => "no"}]
+          options: #{#backend => #buccaneer}
+      ]
+    self assert: clash isError
+
+  testParseBind =>
+    v4 := HttpExchangeAdapter parseBind: "127.0.0.1"
+    self assert: (v4 at: 1) equals: {127, 0, 0, 1}
+    self assert: (v4 at: 2) equals: false
+    v6 := HttpExchangeAdapter parseBind: "::1"
+    self assert: (v6 at: 1) equals: {0, 0, 0, 0, 0, 0, 0, 1}
+    self assert: (v6 at: 2) equals: true
+    full := HttpExchangeAdapter parseBind: "1:2:3:4:5:6:7:8"
+    self assert: (full at: 1) equals: {1, 2, 3, 4, 5, 6, 7, 8}
+    mapped := HttpExchangeAdapter parseBind: "::ffff:1.2.3.4"
+    self assert: (mapped at: 1) equals: {0, 0, 0, 0, 0, 65535, 258, 772}
+    zeros := HttpExchangeAdapter parseBind: "::"
+    self assert: (zeros at: 1) equals: {0, 0, 0, 0, 0, 0, 0, 0}
+    bad := #("1.2.3.4.5", "1::2::3", "gggg::1", "1:2:3:4:5:6:7::8", "12345::", "not-an-ip")
+    bad
+      do: [:each |
+        self assert: (Result tryDo: [
+          HttpExchangeAdapter parseBind: each
+        ]) isError
+      ]
+
+  testBindIpv6 =>
+    self.srv := self startBuccaneer: [:req |
+      HTTPResponse new: #{#status => 200, #body => "v6"}
+    ] options: #{#bind => "::1"}
+    port := self.srv port
+    client := ((Erlang gen_tcp)
+      connect: {0, 0, 0, 0, 0, 0, 0, 1}
+      with: port
+      with: #(#binary, {#packet, #raw}, {#active, #false}, #inet6)) unwrap
+    (Erlang gen_tcp) send: client with: "GET / HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n"
+    raw := ((Erlang gen_tcp)
+      recv: client
+      with: 0
+      with: 3000) unwrap
+    (Erlang gen_tcp) close: client
+    self assert: (raw asStringUnchecked includesSubstring: "v6")
+
   testInvalidBindRaises =>
     outcome := Result
       tryDo: [
@@ -308,6 +360,10 @@ TestCase subclass: HttpExchangeAdapterTest
     self assert: (q at: "flag") equals: "true"
     self assert: (QueryParser parse: "") equals: #{}
     self assert: (QueryParser parse: nil) equals: #{}
+    adjacent := QueryParser parse: "n=%41%42"
+    self assert: (adjacent at: "n") equals: "AB"
+    mixed := QueryParser parse: "n=%41+%42C+%2f"
+    self assert: (mixed at: "n") equals: "A BC /"
 
   testClientDisconnectKeepsServing =>
     self.srv := self startBuccaneer: [:req |

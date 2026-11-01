@@ -107,6 +107,81 @@ TestCase subclass: HTTPServerTest
     deleteResp := (HTTPClient delete: url) unwrap
     self assert: deleteResp status equals: 405
 
+  // ===== Router =====
+  testEncodedPathParamStaysRaw =>
+    router := HTTPRouter
+      routes: #(HTTPRoute
+        get: "/users/:id"
+        handler: [:req |
+          HTTPResponse new: #{
+            #status => 200,
+            #body => "id=" ++ (req params at: "id")
+          }
+        ])
+    self.srv := HTTPServer start: 0 handler: router
+    url := "http://localhost:" ++ self.srv port asString ++ "/users/%34%32"
+    resp := (HTTPClient get: url) unwrap
+    self assert: resp body equals: "id=%34%32"
+
+  // ===== Connection reuse (raw socket; backend-agnostic) =====
+  testKeepAliveServesTwoRequests =>
+    self.srv := HTTPServer start: 0 handler: [:req |
+      HTTPResponse new: #{#status => 200, #body => "ka"}
+    ]
+    port := self.srv port
+    client := ((Erlang gen_tcp)
+      connect: {127, 0, 0, 1}
+      with: port
+      with: #(#binary, {#packet, #raw}, {#active, #false})) unwrap
+    first := self rawGet: client path: "/one"
+    second := self rawGet: client path: "/two"
+    (Erlang gen_tcp) close: client
+    self assert: (first includesSubstring: "200 OK")
+    self assert: (first includesSubstring: "ka")
+    self assert: (second includesSubstring: "200 OK")
+    self assert: (second includesSubstring: "ka")
+
+  testPipelinedRequests =>
+    self.srv := HTTPServer start: 0 handler: [:req |
+      HTTPResponse new: #{#status => 200, #body => req path}
+    ]
+    port := self.srv port
+    client := ((Erlang gen_tcp)
+      connect: {127, 0, 0, 1}
+      with: port
+      with: #(#binary, {#packet, #raw}, {#active, #false})) unwrap
+    (Erlang gen_tcp) send: client with: "GET /a HTTP/1.1\r\nhost: x\r\n\r\nGET /b HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n"
+    raw := ""
+    [(raw includesSubstring: "/b") not]
+      whileTrue: [
+        raw := raw
+          concat: (((Erlang gen_tcp)
+            recv: client
+            with: 0
+            with: 2000) unwrap) asStringUnchecked
+      ]
+    (Erlang gen_tcp) close: client
+    self assert: (raw includesSubstring: "200 OK")
+    self assert: (raw includesSubstring: "/a")
+    self assert: (raw includesSubstring: "/b")
+
+  rawGet: client path: path =>
+    (Erlang gen_tcp) send: client with: "GET " ++ path ++ " HTTP/1.1\r\nhost: x\r\n\r\n"
+    head := ""
+    [(head includesSubstring: "\r\n\r\n") not]
+      whileTrue: [
+        head := head
+          concat: (((Erlang gen_tcp)
+            recv: client
+            with: 1
+            with: 2000) unwrap)
+      ]
+    body := ((Erlang gen_tcp)
+      recv: client
+      with: 2
+      with: 2000) unwrap
+    head concat: body asStringUnchecked
+
   // ===== Identity =====
   testPrintString =>
     self.srv := HTTPServer start: 0 handler: [:req |

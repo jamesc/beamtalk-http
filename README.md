@@ -74,8 +74,8 @@ Known differences on the buccaneer backend:
 
 - Request bodies are capped at 8 MB (larger ones answer 413);
   cowboy reads unbounded bodies.
-- `#bind` takes an IPv4 address only (`inet:parse_address`-style
-  IPv6 works on cowboy).
+- `#bind` takes IPv4 dotted quads and IPv6 (with `::` compression
+  and embedded v4 tails) on both backends.
 - No interim `100-continue` is sent (engine Phase 3): clients that
   wait for one hit the read timeout instead of getting a status.
 - Malformed percent-encoding in the query and malformed chunk framing
@@ -83,6 +83,9 @@ Known differences on the buccaneer backend:
 - The handler is validated at start on both backends, matching
   cowboy's rule: a block, an `HTTPRouter`, or an actor responding to
   `handle:`.
+- A port already in use raises a catchable `Error` at start on
+  buccaneer; on cowboy the native listener failure escapes
+  `Result tryDo:`/`on:do:` and crashes the starting process.
 
 CI runs the suite on both backends; see `.github/workflows/ci.yml`.
 
