@@ -3,8 +3,9 @@
 
 /// Unit tests for `HttpWebSocketAdapter` and `WebSocketHandle`: no
 /// server, no socket. The test process stands in for the connection
-/// process, so `ws sendText:` lands in this mailbox and `mailed:`
-/// reads it back through `process_info`.
+/// process. Inside a callback `ws sendText:` comes back as the
+/// callback's push; outside one it lands in this mailbox, and
+/// `mailed:` reads it back through `process_info`.
 TestCase subclass: WebSocketAdapterTest
 
   adapterFor: handlerClass :: Object -> HttpWebSocketAdapter =>
@@ -35,15 +36,40 @@ TestCase subclass: WebSocketAdapterTest
 
   testHandleInTextEchoes =>
     result := self liveEcho handleIn: {#text, "hi"}
-    self assert: result kind equals: #ok
+    self assert: result kind equals: #push
+    self assert: result frames equals: #({#text, "hi"})
     self assert: (result state state texts) equals: 1
-    self assert: (self mailed: {#wsSend, {#text, "hi"}}) equals: true
+    self assert: (self mailed: {#wsSend, {#text, "hi"}}) equals: false
 
   testHandleInBinaryEchoes =>
     data := Binary fromBytes: #(1, 2, 3)
     result := self liveEcho handleIn: {#binary, data}
+    self assert: result kind equals: #push
+    self assert: result frames equals: #({#binary, data})
+
+  testHandleInWithoutSendsStaysOk =>
+    live := ((self adapterFor: WsMinimalHandler) init) state
+    result := live handleIn: {#text, "hi"}
     self assert: result kind equals: #ok
-    self assert: (self mailed: {#wsSend, {#binary, data}}) equals: true
+    self assert: (result state state texts) equals: 1
+
+  testCallbackFramesPushInOrder =>
+    live := ((self adapterFor: WsBurstHandler) init) state
+    result := live handleIn: {#text, "go"}
+    self assert: result kind equals: #push
+    self assert: result frames equals: #({#text, "go"}, {#text, "again"})
+
+  testCallbackCloseStopsAfterItsFrames =>
+    live := ((self adapterFor: WsBurstHandler) init) state
+    result := live handleIn: {#text, "bye"}
+    self assert: result kind equals: #stop
+    self assert: result code equals: 4001
+    self assert: result frames equals: #({#text, "bye"})
+
+  testHandleOutsideCallbackMails =>
+    ws := WebSocketHandle for: Pid current
+    ws sendText: "later"
+    self assert: (self mailed: {#wsSend, {#text, "later"}}) equals: true
 
   testHandleInfoSendPushes =>
     result := self liveEcho handleInfo: {#wsSend, {#text, "yo"}}
@@ -62,8 +88,8 @@ TestCase subclass: WebSocketAdapterTest
 
   testHandleInfoOtherCallsOnInfo =>
     result := self liveEcho handleInfo: "hello"
-    self assert: result kind equals: #ok
-    self assert: (self mailed: {#wsSend, {#text, "info"}}) equals: true
+    self assert: result kind equals: #push
+    self assert: result frames equals: #({#text, "info"})
 
   testHandleInfoWithoutOnInfoStays =>
     live := ((self adapterFor: WsMinimalHandler) init) state

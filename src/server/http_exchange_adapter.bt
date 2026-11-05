@@ -29,8 +29,24 @@ Object subclass: HttpExchangeAdapter
   /// 500 below. So does a raise once the response has started (a
   /// `streamWith:` block raising after `startChunked:headers:`): a 500 is
   /// impossible then, so the engine closes the connection and logs it.
+  ///
+  /// Decides the handler's shape on every call; `HTTPBuccaneerServer`
+  /// decides it once at start and calls `serve:handler:kind:` instead.
   class serve: ex :: Exchange handler: handler -> Object =>
-    [self respond: ex handler: handler]
+    self
+      serve: ex
+      handler: handler
+      kind: (self handlerKind: handler)
+
+  /// `serve:handler:` with the handler's shape already decided by
+  /// `handlerKind:`, so a request does no `isKindOf:` checks on it.
+  class serve: ex :: Exchange handler: handler kind: kind :: Symbol -> Object =>
+    [
+      self
+        respond: ex
+        handler: handler
+        kind: kind
+    ]
       on: Exception
       do: [:e |
         ((e isKindOf: TransportError) or: [
@@ -49,30 +65,56 @@ Object subclass: HttpExchangeAdapter
         self send500: ex
       ]
 
-  class respond: ex :: Exchange handler: handler -> Object =>
+  /// The handler's shape: `#block` (a block, `PlugChain`s included),
+  /// `#router` (an `HTTPRouter`) or `#actor` (anything answering
+  /// `handle:`, an `HTTPHandler` actor).
+  class handlerKind: handler -> Symbol =>
+    (handler isKindOf: Block) ifTrue: [^#block]
+    (handler isKindOf: HTTPRouter) ifTrue: [^#router]
+    #actor
+
+  class respond: ex :: Exchange handler: handler kind: kind :: Symbol -> Object =>
     query := QueryParser parse: ex query
     query isNil ifTrue: [^self send400: ex reason: "invalid UTF-8 in query"]
-    headers := self requestHeaders: ex headers
+    raw := ex headers
+    headers := self requestHeaders: raw
     headers isNil ifTrue: [^self send400: ex reason: "invalid UTF-8 in header"]
-    lazy := (handler isKindOf: Block) or: [handler isKindOf: HTTPRouter]
+    // Actor handlers get the whole body before dispatch, as the cowboy
+    // backend reads it; blocks and routers read it lazily through
+    // `req body` / `req readChunk`.
+    preRead := kind =:= #actor
     body := ""
-    lazy
-      ifFalse: [
+    preRead
+      ifTrue: [
         body := self readBody: ex
         body isNil ifTrue: [^nil]
       ]
     req := HTTPRequest
-      new: #{
-        #method => ex method,
-        #path => ex path,
-        #headers => headers,
-        #body => body,
-        #queryParams => query,
-        #params => #{},
-        #exchange => ex
-      }
-    resp := self dispatch: handler request: req
+      method: ex method
+      path: ex path
+      headers: headers
+      body: body
+      queryParams: query
+      params: #{}
+      exchange: ex
+    resp := self
+      dispatch: handler
+      kind: kind
+      request: req
     (resp isKindOf: HTTPResponse) ifFalse: [^self send500: ex]
+    // A body read before dispatch is already drained, and so is a
+    // request that cannot have one.
+    drain := preRead not and: [self mayHaveBody: ex headers: raw]
+    self
+      send: resp
+      on: ex
+      request: req
+      drain: drain
+
+  /// Send `resp`, whatever its shape: a WebSocket upgrade, a stream, a
+  /// file or a plain body. `drain` reads an unread request body first,
+  /// so over-large and malformed bodies keep their 413 and 400.
+  class send: resp :: HTTPResponse on: ex :: Exchange request: req :: HTTPRequest drain: drain :: Boolean -> Object =>
     resp websocketHandler notNil
       ifTrue: [
         ^self
@@ -82,20 +124,44 @@ Object subclass: HttpExchangeAdapter
       ]
     stream := resp stream
     stream notNil ifTrue: [^self runStream: ex block: stream]
+    drain
+      ifTrue: [
+        drained := self readBody: ex
+        drained isNil ifTrue: [^nil]
+      ]
     file := resp file
     file notNil
       ifTrue: [
-        ^self
-          sendFileResponse: ex
-          response: resp
+        ^ex
+          sendFile: resp status
+          headers: (self responseHeaders: resp headers)
           path: file
+          offset: resp fileOffset
+          length: resp fileLength
       ]
-    drained := self readBody: ex
-    drained isNil ifTrue: [^nil]
     ex
       sendResp: resp status
       headers: (self responseHeaders: resp headers)
       body: resp body
+
+  /// Whether the request may still have an unread body. On HTTP/1 a
+  /// request with no `content-length` (or `content-length: 0`) and no
+  /// `transfer-encoding` has none, so the drain would only re-read
+  /// nothing. An `expect` header keeps the drain, which is where the
+  /// engine sends `100 Continue`. HTTP/2 can carry a body without
+  /// `content-length`, so it always drains.
+  class mayHaveBody: ex :: Exchange headers: raw -> Boolean =>
+    raw
+      do: [:t |
+        {name, value} := t
+        name match: [
+          "content-length" -> (value =:= "0") ifFalse: [^true];
+          "transfer-encoding" -> ^true;
+          "expect" -> ^true;
+          _ -> nil
+        ]
+      ]
+    ex httpProtocol =:= #http2
 
   /// Run a `streamWith:` block in the connection process with a writer
   /// over the exchange. A clean return without `finish` finishes the
@@ -124,27 +190,15 @@ Object subclass: HttpExchangeAdapter
       _ -> nil
     ]
 
-  /// Send a `file:` / `file:offset:length:` response, draining an unread
-  /// body first so over-large and malformed bodies keep their 413 and 400.
-  class sendFileResponse: ex :: Exchange response: resp :: HTTPResponse path: path :: String -> Object =>
-    drained := self readBody: ex
-    drained isNil ifTrue: [^nil]
-    ex
-      sendFile: resp status
-      headers: (self responseHeaders: resp headers)
-      path: path
-      offset: resp fileOffset
-      length: resp fileLength
-
   /// Dispatch to a block, an `HTTPHandler` actor (a real actor send, as
   /// the cowboy backend does) or an `HTTPRouter`. The router matcher
   /// stays native, shared with the cowboy backend.
-  class dispatch: handler request: req :: HTTPRequest -> Object =>
-    (handler isKindOf: Block) ifTrue: [^handler value: req]
-    (handler isKindOf: HTTPRouter) ifTrue: [
-      ^self dispatchRouter: handler request: req
+  class dispatch: handler kind: kind :: Symbol request: req :: HTTPRequest -> Object =>
+    kind match: [
+      #block -> handler value: req;
+      #router -> self dispatchRouter: handler request: req;
+      _ -> handler handle: req
     ]
-    handler handle: req
 
   class dispatchRouter: router :: HTTPRouter request: req :: HTTPRequest -> Object =>
     matched := router match: req method path: req path
@@ -174,30 +228,30 @@ Object subclass: HttpExchangeAdapter
     {_, h, p} := matched
     h value: (req withParams: p)
 
-  /// Engine header tuples to `HTTPRequest` pairs. Names are lowercase
-  /// Strings by the time the engine hands them over; values may be
-  /// opaque Binaries, which cowboy would reject — answer nil so the
-  /// caller sends 400 without running the handler.
+  /// Engine header tuples to `HTTPRequest` pairs, in one pass. Names are
+  /// lowercase Strings by the time the engine hands them over; values
+  /// are Strings, or opaque Binaries when the engine could not decode
+  /// them (HTTP/2 values, non-UTF-8 HTTP/1 values). A Binary must be
+  /// valid UTF-8, which cowboy also insists on: answer nil otherwise so
+  /// the caller sends 400 without running the handler.
   class requestHeaders: headers -> List(List(String)) | Nil =>
-    out := #()
     headers
-      do: [:t |
-        name := t at: 1
-        value := t at: 2
-        (name isKindOf: String) ifFalse: [^nil]
-        text := self headerValueText: value
-        text isNil ifTrue: [^nil]
-        out := out add: #(name, text)
+      collect: [:t |
+        {name, value} := t
+        name match: [
+          n :: String -> n;
+          _ -> ^nil
+        ]
+        value match: [
+          v :: String -> #(name, v);
+          b :: Binary -> [
+            converted := b asString
+            converted isError ifTrue: [^nil]
+            #(name, converted value)
+          ] value;
+          _ -> ^nil
+        ]
       ]
-    out
-
-  /// A header value to text: Strings pass through, Binaries must be
-  /// valid UTF-8 (nil otherwise, so the caller answers 400).
-  class headerValueText: value -> String | Nil =>
-    (value isKindOf: String) ifTrue: [^value]
-    converted := value asString
-    converted isError ifTrue: [^nil]
-    converted value
 
   /// The whole body: a String when valid UTF-8, a Binary otherwise.
   /// Before dispatch (actor handlers, as the cowboy backend reads it

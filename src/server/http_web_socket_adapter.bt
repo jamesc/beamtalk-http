@@ -10,8 +10,12 @@
 /// and answers the handler's first state, `handleIn:` runs the data
 /// callbacks, `handleInfo:` runs `onInfo:` (or answers a queued
 /// `WebSocketHandle` frame as a push), and `terminate:` runs
-/// `onClose:`. The adapter never implements `handleControl:`, so the
-/// engine answers pings itself and the handler never sees them.
+/// `onClose:`. While a callback runs, the handle queues its frames
+/// with the adapter, which answers them as that callback's push (or
+/// stop), so a frame costs no second trip through the mailbox.
+///
+/// The adapter never implements `handleControl:`, so the engine
+/// answers pings itself and the handler never sees them.
 ///
 /// `terminate:` answers the handler's `onClose:` answer so tests can
 /// observe it; the engine ignores it.
@@ -34,14 +38,51 @@ sealed Value subclass: HttpWebSocketAdapter
 
   init -> WebSocketResult =>
     handle := WebSocketHandle for: Pid current
+    self openQueue
     first := self handlerClass onOpen: handle request: self request
-    WebSocketResult ok: ((self withState: first) withWs: handle)
+    ((self withState: first) withWs: handle) answerQueued
 
   handleIn: frame :: Tuple(Symbol, Binary) -> WebSocketResult =>
-    frame match: [
-      {#text, t} -> WebSocketResult ok: (self withState: (self state onText: (t asStringUnchecked) ws: self ws));
-      {#binary, b} -> WebSocketResult ok: (self withState: (self state onBinary: b ws: self ws))
+    self openQueue
+    next := frame match: [
+      {#text, t} -> self state onText: (self textOf: t) ws: self ws;
+      {#binary, b} -> self state onBinary: b ws: self ws
     ]
+    (self withState: next) answerQueued
+
+  /// A text frame's payload as the String `onText:` takes: the engine
+  /// has already checked it is UTF-8.
+  textOf: t :: Binary -> String => t asStringUnchecked
+
+  /// Open the handle's queue for the callback about to run (see
+  /// `WebSocketHandle>>queue:`).
+  openQueue -> Object => Erlang erlang put: WebSocketHandle queueKey with: #()
+
+  /// Close the queue and answer what the callback queued, in order: a
+  /// push of its frames, a stop at its first close (with the frames
+  /// before it), or a plain ok.
+  answerQueued -> WebSocketResult =>
+    queued := Erlang erlang erase: WebSocketHandle queueKey
+    queued match: [
+      q :: List -> nil;
+      _ -> ^WebSocketResult ok: self
+    ]
+    queued isEmpty ifTrue: [^WebSocketResult ok: self]
+    queued size =:= 1 ifTrue: [^self sendPayload: (queued at: 1)]
+    frames := #()
+    queued
+      do: [:payload |
+        result := self sendPayload: payload
+        result kind =:= #stop
+          ifTrue: [
+            ^WebSocketResult
+              stop: self
+              code: result code
+              frames: frames
+          ]
+        frames := frames add: (result frames at: 1)
+      ]
+    WebSocketResult push: frames state: self
 
   handleInfo: message :: Object -> WebSocketResult =>
     message match: [
@@ -71,9 +112,13 @@ sealed Value subclass: HttpWebSocketAdapter
 
   /// Any other message: the handler's `onInfo:`, when it has one.
   infoToHandler: message :: Object -> WebSocketResult =>
-    (self state respondsTo: #onInfo:ws:) ifTrue: [
-      WebSocketResult ok: (self withState: (self state onInfo: message ws: self ws))
-    ] ifFalse: [WebSocketResult ok: self]
+    (self state respondsTo: #onInfo:ws:)
+      ifTrue: [
+        self openQueue
+        next := self state onInfo: message ws: self ws
+        (self withState: next) answerQueued
+      ]
+      ifFalse: [WebSocketResult ok: self]
 
   terminate: reason :: Object -> Object =>
     (self state respondsTo: #onClose:) ifTrue: [
