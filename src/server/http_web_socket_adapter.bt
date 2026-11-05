@@ -12,8 +12,10 @@
 /// `WebSocketHandle` frame as a push), and `terminate:` runs
 /// `onClose:`. While a callback runs, the handle queues its frames
 /// with the adapter, which answers them as that callback's push (or
-/// stop), so a frame costs no second trip through the mailbox. The adapter never implements `handleControl:`, so the
-/// engine answers pings itself and the handler never sees them.
+/// stop), so a frame costs no second trip through the mailbox.
+///
+/// The adapter never implements `handleControl:`, so the engine
+/// answers pings itself and the handler never sees them.
 ///
 /// `terminate:` answers the handler's `onClose:` answer so tests can
 /// observe it; the engine ignores it.

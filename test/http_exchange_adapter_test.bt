@@ -29,6 +29,45 @@ TestCase subclass: HttpExchangeAdapterTest
 
   baseUrl => "http://localhost:" ++ self.srv port asString
 
+  /// Send `raw` on a fresh connection and read until `last` shows up.
+  pipelined: raw :: String until: last :: String -> String =>
+    client := ((Erlang gen_tcp)
+      connect: {127, 0, 0, 1}
+      with: self.srv port
+      with: #(#binary, {#packet, #raw}, {#active, #false})) unwrap
+    (Erlang gen_tcp) send: client with: raw
+    got := ""
+    [(got includesSubstring: last) not]
+      whileTrue: [
+        got := got
+          concat: (((Erlang gen_tcp)
+            recv: client
+            with: 0
+            with: 2000) unwrap) asStringUnchecked
+      ]
+    (Erlang gen_tcp) close: client
+    got
+
+  // BT-4466: a body the handler never reads is drained before the next
+  // keep-alive request, so its bytes cannot be parsed as that request.
+  testIgnoredBodyDoesNotLeakIntoNextRequest =>
+    self.srv := self startBuccaneer: [:req |
+      HTTPResponse new: #{#status => 200, #body => "at " ++ req path}
+    ]
+    raw := self pipelined: "POST /a HTTP/1.1\r\nhost: x\r\ncontent-length: 18\r\n\r\nGET /evil HTTP/1.1GET /b HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n" until: "at /b"
+    self assert: (raw includesSubstring: "at /a")
+    self assert: (raw includesSubstring: "at /b")
+    self deny: (raw includesSubstring: "/evil")
+
+  testIgnoredChunkedBodyDoesNotLeakIntoNextRequest =>
+    self.srv := self startBuccaneer: [:req |
+      HTTPResponse new: #{#status => 200, #body => "at " ++ req path}
+    ]
+    raw := self pipelined: "POST /a HTTP/1.1\r\nhost: x\r\ntransfer-encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\nGET /b HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n" until: "at /b"
+    self assert: (raw includesSubstring: "at /a")
+    self assert: (raw includesSubstring: "at /b")
+    self deny: (raw includesSubstring: "400")
+
   testDuplicateHeadersKeptSeparate =>
     self.srv := self
       startBuccaneer: [:req |

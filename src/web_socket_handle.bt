@@ -8,9 +8,11 @@
 /// the connection to write after the current callback answers;
 /// `close:` / `close:` ask it to stop. Inside a handler callback the
 /// queue is the adapter's, which writes it as that callback's answer;
-/// anywhere else in the connection process it is the mailbox. `pid` is the connection
-/// process itself: an actor working for the handler sends its pushes
-/// there, and they arrive in the handler's `onInfo:`.
+/// anywhere else in the connection process it is the mailbox.
+///
+/// `pid` is the connection process itself: an actor working for the
+/// handler sends its pushes there, and they arrive in the handler's
+/// `onInfo:`.
 ///
 /// Only the connection process may use the handle. Any other process
 /// — an actor the handler kept it from, a test probe — raises an
