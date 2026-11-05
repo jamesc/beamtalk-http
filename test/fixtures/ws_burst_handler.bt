@@ -1,0 +1,22 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// A `WebSocketHandler` that queues several frames from one callback:
+/// `"go"` sends two texts, `"bye"` sends one and then closes with 4001,
+/// and anything after the close is dropped.
+sealed typed Value subclass: WsBurstHandler
+
+  class onOpen: _ws :: WebSocketHandle request: _req :: HTTPRequest -> WsBurstHandler =>
+    self new
+
+  onText: text :: String ws: ws :: WebSocketHandle -> WsBurstHandler =>
+    ws sendText: text
+    text =:= "bye"
+      ifTrue: [
+        ws close: 4001
+        ws sendText: "dropped"
+      ]
+      ifFalse: [ws sendText: "again"]
+    self
+
+  onBinary: _data :: Binary ws: _ws :: WebSocketHandle -> WsBurstHandler => self

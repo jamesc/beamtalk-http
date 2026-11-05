@@ -26,6 +26,8 @@ Actor subclass: HTTPBuccaneerServer
       ifFalse: [
         Error signal: "Invalid HTTP handler; expected a block, HTTPRouter or handle: actor"
       ]
+    // Decided once here, not per request (BT-4466).
+    kind := HttpExchangeAdapter handlerKind: h
     bound := HttpExchangeAdapter parseBind: self.bind
     srv := (Buccaneer
       start: #{
@@ -33,7 +35,12 @@ Actor subclass: HTTPBuccaneerServer
         #ip => (bound at: 1),
         #inet6 => (bound at: 2),
         #startupLog => false,
-        #handler => [:ex | HttpExchangeAdapter serve: ex handler: h]
+        #handler => [:ex |
+          HttpExchangeAdapter
+            serve: ex
+            handler: h
+            kind: kind
+        ]
       }) unwrap
     self.server := srv
     info := srv listenerInfo unwrap
