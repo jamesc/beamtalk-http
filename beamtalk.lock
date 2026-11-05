@@ -3,17 +3,27 @@
 
 [[package]]
 name = "buccaneer"
-url = "https://github.com/jamesc/beamtalk-buccaneer"
-reference = "rev:4d9a5993059ebe31d71c4fd950250083da5b2808"
-sha = "4d9a5993059ebe31d71c4fd950250083da5b2808"
+version = "0.1.1"
+registry = "https://github.com/jamesc/beamtalk-registry"
+url = "https://github.com/jamesc/beamtalk-buccaneer.git"
+reference = "tag:v0.1.1"
+sha = "08d679c02bde2f30e9f9578b0c602cde4f4e4692"
 
 [[package]]
 name = "catalina"
-version = "0.2.1"
+version = "0.2.2"
 registry = "https://github.com/jamesc/beamtalk-registry"
 url = "https://github.com/jamesc/beamtalk-catalina.git"
-reference = "tag:v0.2.1"
-sha = "78e9d6438f1f13a6b0b7044a6082cdc990280e9e"
+reference = "tag:v0.2.2"
+sha = "f933e03ccaffcd128514aa81be1281047ce8c69a"
+
+[[package]]
+name = "hpack"
+version = "0.1.0"
+registry = "https://github.com/jamesc/beamtalk-registry"
+url = "https://github.com/jamesc/beamtalk-hpack.git"
+reference = "tag:v0.1.0"
+sha = "9af67255360391e8eb89a47205db4cac51bf1b72"
 
 [[native_package]]
 name = "cowboy"
@@ -22,7 +32,7 @@ sha = ""
 
 [[native_package]]
 name = "cowlib"
-version = "2.19.0"
+version = "2.21.0"
 sha = ""
 
 [[native_package]]
@@ -32,6 +42,6 @@ sha = ""
 
 [[native_package]]
 name = "ranch"
-version = "2.2.1"
+version = "2.3.0"
 sha = ""
 
