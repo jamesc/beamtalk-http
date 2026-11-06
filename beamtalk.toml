@@ -3,11 +3,11 @@
 
 [package]
 name = "http"
-version = "0.3.0"
+version = "0.3.1"
 description = "HTTP client and server for Beamtalk"
 
 [dependencies]
-buccaneer = "0.1.2"
+buccaneer = "0.1.3"
 
 [native.dependencies]
 # gun 2.2.0 has a bug: calls cow_http2_machine:is_remote_concurrency_limit_reached/1
