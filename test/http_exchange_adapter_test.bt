@@ -5,7 +5,7 @@
 /// does not hit: mapping details (duplicate headers, query shapes,
 /// chunked and 100-continue bodies, non-UTF-8 bodies), failure paths
 /// (raise, non-response, over-large body) and server plumbing (router
-/// dispatch, actor handlers, `#bind`, the `#backend` option).
+/// dispatch, actor handlers, `#bind`).
 TestCase subclass: HttpExchangeAdapterTest
   field: srv = nil
 
@@ -283,16 +283,6 @@ TestCase subclass: HttpExchangeAdapterTest
     resp := (HTTPClient get: self baseUrl ++ "/") unwrap
     self assert: resp body equals: "bound"
 
-  testUnknownBackendRaises =>
-    outcome := Result
-      tryDo: [
-        HTTPServer
-          start: 0
-          handler: [:req | nil]
-          options: #{#backend => #bogus}
-      ]
-    self assert: outcome isError
-
   testPortInUseRaises =>
     self.srv := self startBuccaneer: [:req |
       HTTPResponse new: #{#status => 200, #body => "ok"}
@@ -375,33 +365,6 @@ TestCase subclass: HttpExchangeAdapterTest
     self assert: garbage isError
     nilHandler := Result tryDo: [self startBuccaneer: nil]
     self assert: nilHandler isError
-
-  // `#backend => #buccaneer` still starts a server: code written for
-  // 0.2 that pinned the backend keeps working (BT-4087).
-  testBuccaneerBackendOptionAccepted =>
-    self.srv := self startBuccaneer: [:req |
-      HTTPResponse new: #{#status => 200, #body => "pinned"}
-    ] options: #{#backend => #buccaneer}
-    resp := (HTTPClient get: self baseUrl ++ "/") unwrap
-    self assert: resp body equals: "pinned"
-
-  // The 0.2 environment switch selects nothing now: only `cowboy`
-  // raises, every other value is ignored. The value is passed in, so
-  // the test never changes the real environment under other tests.
-  testBackendEnvMatrix =>
-    #(nil, "", "buccaneer", "bogus")
-      do: [:env |
-        self assert: (Result tryDo: [
-          HTTPServer checkBackend: #{} env: env
-        ]) isOk
-      ]
-    self assert: (Result tryDo: [
-      HTTPServer checkBackend: #{} env: "cowboy"
-    ]) isError
-    self
-      assert: (Result tryDo: [
-        HTTPServer checkBackend: #{#backend => #buccaneer} env: nil
-      ]) isOk
 
   testNibbleBounds =>
     self assert: (QueryParser nibble: "0") equals: 0

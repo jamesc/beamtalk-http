@@ -83,10 +83,8 @@ Request handling to know about:
 - `#bind` takes IPv4 dotted quads and IPv6 (with `::` compression and
   embedded v4 tails).
 
-The `#backend` option is gone: `#backend => #buccaneer` is still
-accepted, and `#backend => #cowboy` (or `BEAMTALK_HTTP_BACKEND=cowboy`)
-raises an `argument_error` explaining that cowboy was removed in 0.3.0.
-Pin `http = "0.2.0"` to stay on cowboy.
+cowboy was removed in 0.3.0, along with the `#backend` option. Pin
+`http = "0.2.0"` to stay on cowboy.
 
 ### Streaming
 

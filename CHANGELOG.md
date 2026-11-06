@@ -14,14 +14,9 @@ dependency left is gun (with cowlib), for `HTTPClient`.
 The same handlers, routers, plugs and tests run unchanged. What changes
 for code that used the 0.2 default:
 
-- **`#backend` option.** `#backend => #buccaneer` is still accepted and
-  does nothing. `#backend => #cowboy` raises an `argument_error`
-  (`#beamtalk_error{}`) whose hint says cowboy was removed in 0.3.0, rather
-  than quietly serving on Buccaneer. Any other `#backend` value also raises
-  an `argument_error`. To keep cowboy, pin `http = "0.2.0"`.
-- **`BEAMTALK_HTTP_BACKEND`.** The environment variable no longer selects
-  anything. Set to `cowboy` it raises the same `argument_error` at server
-  start; other values are ignored.
+- **`#backend` option and `BEAMTALK_HTTP_BACKEND` are removed.** There
+  is one engine, so there is nothing to select. Like any other unknown
+  option, a `#backend` key is ignored. To keep cowboy, pin `http = "0.2.0"`.
 - **`HTTPServer` is a plain Beamtalk actor.** It owns the Buccaneer server
   directly. The internal `HTTPBuccaneerServer` class is gone, and
   `HTTPServer start:handler:options:` always answers an `HTTPServer`.

@@ -46,10 +46,8 @@ type HttpServerOptions = Dictionary(Symbol, Dynamic)
 /// handler answers that is not an `HTTPResponse` is a 500, as is any
 /// raise. Request bodies read with `req body` are capped at 8 MB (413).
 ///
-/// Until 0.3.0 the server ran on cowboy by default; cowboy is gone, and
-/// asking for it (`#backend => #cowboy`, or `BEAMTALK_HTTP_BACKEND=cowboy`)
-/// raises an `argument_error`. The CHANGELOG lists the behaviour
-/// differences from the cowboy server.
+/// Until 0.3.0 the server ran on cowboy by default. The CHANGELOG lists
+/// the behaviour differences from the cowboy server.
 ///
 /// As an Actor, HTTPServer can be supervised for automatic restart on
 /// failure and integrates with the standard Actor lifecycle (`stop`,
@@ -118,7 +116,6 @@ Actor subclass: HTTPServer
   ///
   /// ## Options
   /// - `#bind` (String, default `"127.0.0.1"`) — IP address to bind to; v4 dotted quads and IPv6 (with `::` compression).
-  /// - `#backend` (`#buccaneer`, optional) — accepted so code written for 0.2 keeps working; Buccaneer is the only backend. `#cowboy` raises an `argument_error` (removed in 0.3.0), as does any other value.
   ///
   /// ## Examples
   /// ```beamtalk
@@ -126,7 +123,6 @@ Actor subclass: HTTPServer
   ///   options: #{ #bind => "0.0.0.0" }
   /// ```
   class start: port :: Integer handler: handler :: HTTPHandlerLike options: opts :: HttpServerOptions -> HTTPServer =>
-    self checkBackend: opts env: (System getEnv: "BEAMTALK_HTTP_BACKEND")
     self checkHandler: handler
     self
       spawnWith: #{
@@ -134,35 +130,6 @@ Actor subclass: HTTPServer
         #handler => handler,
         #bind => (opts at: #bind ifAbsent: ["127.0.0.1"])
       }
-
-  /// Reject a backend this package no longer has. The `#backend` option
-  /// may only name `#buccaneer`; `#cowboy` (removed in 0.3.0) and
-  /// anything else raise an `argument_error`. The 0.2 environment
-  /// switch `BEAMTALK_HTTP_BACKEND` selects nothing now, but set to
-  /// `cowboy` it raises the same error rather than silently serving on
-  /// Buccaneer. `env` is that variable's value (nil when unset).
-  class checkBackend: opts :: HttpServerOptions env: env :: String | Nil -> Nil =>
-    explicit := opts at: #backend ifAbsent: [nil]
-    explicit =:= #cowboy ifTrue: [self cowboyRemoved: "the #backend option"]
-    (explicit isNil or: [explicit =:= #buccaneer])
-      ifFalse: [
-        Exception
-          signalKind: #argument_error
-          class: #HTTPServer
-          selector: #start:handler:options:
-          hint: "Unknown #backend; Buccaneer is the only backend (#buccaneer)"
-      ]
-    env =:= "cowboy" ifTrue: [self cowboyRemoved: "BEAMTALK_HTTP_BACKEND"]
-    nil
-
-  class cowboyRemoved: source :: String -> Never =>
-    Exception
-      signalKind: #argument_error
-      class: #HTTPServer
-      selector: #start:handler:options:
-      hint: "The cowboy backend was removed in http 0.3.0 (asked for by "
-        ++ source
-        ++ "); HTTPServer always runs on Buccaneer. Drop the setting, or pin http 0.2.x to keep cowboy."
 
   /// Raise a `type_error` unless `handler` is a block, an `HTTPRouter`
   /// or an actor responding to `handle:`.

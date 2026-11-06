@@ -6,7 +6,7 @@
 // Tests cover:
 //   - Start/stop lifecycle
 //   - Ephemeral port assignment
-//   - Start-time validation (handler, port, bind, removed cowboy backend)
+//   - Start-time validation (handler, port, bind)
 //   - Request handling with block handlers
 //   - HTTPRequest fields (method, path, body) and their String class
 //   - Response status codes
@@ -332,36 +332,6 @@ TestCase subclass: HTTPServerTest
     resp := (HTTPClient get: url) unwrap
     self assert: resp status equals: 200
     self assert: resp body equals: "v6dial"
-
-  // ===== cowboy was removed in 0.3.0 (BT-4087) =====
-  testCowboyBackendOptionRaises =>
-    self
-      should: [
-        HTTPServer
-          start: 0
-          handler: [:req | HTTPResponse new: #{#status => 200, #body => "ok"}]
-          options: #{#backend => #cowboy}
-      ]
-      raise: #argument_error
-
-  testCowboyBackendErrorExplainsRemoval =>
-    hint := [
-      HTTPServer
-        start: 0
-        handler: [:req | HTTPResponse new: #{#status => 200, #body => "ok"}]
-        options: #{#backend => #cowboy}
-    ] on: Error do: [:e | e hint]
-    self assert: (hint includesSubstring: "removed in http 0.3.0")
-
-  testUnknownBackendRaisesArgumentError =>
-    self
-      should: [
-        HTTPServer
-          start: 0
-          handler: [:req | HTTPResponse new: #{#status => 200, #body => "ok"}]
-          options: #{#backend => #bogus}
-      ]
-      raise: #argument_error
 
   // Streaming values work on the only backend; cowboy 500'd them.
   testStreamWithServes =>
