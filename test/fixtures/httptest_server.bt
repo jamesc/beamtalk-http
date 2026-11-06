@@ -1,0 +1,73 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// The local server `HTTPTest` runs the client against: an `HTTPServer`
+/// (Buccaneer) on an ephemeral port serving these endpoints. Like the
+/// cowboy fixture it replaces (0.2's `beamtalk_http_test_server`), each
+/// endpoint answers whatever the method.
+///
+/// | Path            | Status | Body                                     |
+/// |-----------------|--------|------------------------------------------|
+/// | `/get`          | 200    | `{"method":"GET"}`                       |
+/// | `/post`         | 200    | `{"method":"POST","body":"<req-body>"}`  |
+/// | `/put`          | 200    | `{"method":"PUT","body":"<req-body>"}`   |
+/// | `/delete`       | 200    | `{"method":"DELETE"}`                    |
+/// | `/status/:code` | :code  | empty                                    |
+/// | `/json`         | 200    | `{"type":"json","value":42}`             |
+/// | `/echo-headers` | 200    | JSON object of the request headers       |
+///
+/// JSON bodies go out as `application/json`. Anything else is a 404.
+Object subclass: HTTPTestServer
+
+  /// Start the fixture server on an ephemeral port; `stop` it after.
+  class start -> HTTPServer =>
+    HTTPServer start: 0 handler: [:req | HTTPTestServer handle: req]
+
+  /// Answer one request to the endpoint its path names.
+  class handle: req :: HTTPRequest -> HTTPResponse =>
+    path := req path
+    path match: [
+      "/get" -> self json: #{"method" => "GET"};
+      "/post" -> self json: #{
+        "method" => "POST",
+        "body" => req body asStringUnchecked
+      };
+      "/put" -> self json: #{
+        "method" => "PUT",
+        "body" => req body asStringUnchecked
+      };
+      "/delete" -> self json: #{"method" => "DELETE"};
+      "/json" -> self json: #{"type" => "json", "value" => 42};
+      "/echo-headers" -> self json: (self headerMap: req headers);
+      _ -> self statusOrMissing: path
+    ]
+
+  /// `/status/:code` answers `code` with an empty body; any other path
+  /// is a 404.
+  class statusOrMissing: path :: String -> HTTPResponse =>
+    (path startsWith: "/status/") ifTrue: [
+      HTTPResponse new: #{#status => (path drop: 8) asInteger}
+    ] ifFalse: [
+      HTTPResponse new: #{#status => 404, #body => "no such endpoint"}
+    ]
+
+  /// Request header pairs as one object, a repeated name's values joined
+  /// with ", " (as cowboy presented them).
+  class headerMap: headers :: List(List(String)) -> Dictionary(String, String) =>
+    headers
+      inject: #{}
+      into: [:acc :pair |
+        name := pair at: 1
+        value := pair at: 2
+        seen := acc at: name ifAbsent: [nil]
+        joined := seen isNil ifTrue: [value] ifFalse: [seen ++ ", " ++ value]
+        acc at: name put: joined
+      ]
+
+  class json: value :: Dictionary(String, Object) -> HTTPResponse =>
+    HTTPResponse
+      new: #{
+        #status => 200,
+        #headers => #(#("content-type", "application/json")),
+        #body => Json generate: value
+      }

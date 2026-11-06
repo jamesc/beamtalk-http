@@ -44,8 +44,8 @@ sealed Value subclass: HTTPRequest
   field: queryParams :: Dictionary(String, String) = #{}
   /// Path parameters extracted by HTTPRouter (e.g. `:id` → "42").
   field: params :: Dictionary(String, String) = #{}
-  /// The buccaneer `Exchange` this request arrived on (nil on cowboy and
-  /// in hand-built requests). It is owner-bound: every operation that
+  /// The Buccaneer `Exchange` this request arrived on (nil in hand-built
+  /// requests). It is owner-bound: every operation that
   /// touches the connection works only in the connection process, and
   /// raises `#not_owner` anywhere else.
   field: exchange :: Exchange | Nil = nil
@@ -53,8 +53,8 @@ sealed Value subclass: HTTPRequest
   /// The next part of the request body; an empty Binary means the end of
   /// the body. For block and router handlers, which run in the connection
   /// process: `HTTPHandler` actors already get the whole body, and using
-  /// `readChunk` there raises `#not_owner`. Without an exchange (cowboy,
-  /// hand-built requests) there is nothing to stream, so this answers
+  /// `readChunk` there raises `#not_owner`. Without an exchange (a
+  /// hand-built request) there is nothing to stream, so this answers
   /// `Result error: #not_supported`.
   ///
   /// ## Examples
@@ -121,7 +121,7 @@ sealed Value subclass: HTTPRequest
 
   /// A 1xx informational response while the handler runs (`103 Early
   /// Hints`, ...). Answers `Result error: #not_supported` on HTTP/1.0 —
-  /// and without an exchange, as on cowboy. From another process the
+  /// and without an exchange (a hand-built request). From another process the
   /// exchange raises `#not_owner`.
   inform: status :: Integer headers: hs :: List(List(String)) -> Result(Nil, Object) =>
     ex := self.exchange
@@ -140,8 +140,8 @@ sealed Value subclass: HTTPRequest
   param: name :: String -> String => self.params at: name
 
   /// Human-readable representation: "an HTTPRequest(GET /path)".
-  /// The fields convert explicitly (BT-4172): cowboy hands the handler
-  /// binaries, which stay Strings across the BT-4170 flip this way.
+  /// The fields convert explicitly (BT-4172): a hand-built request may
+  /// hold binaries, which still render as Strings this way.
   printString -> String =>
     "an HTTPRequest("
       ++ self.method asStringUnchecked

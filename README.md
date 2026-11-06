@@ -2,7 +2,11 @@
 
 HTTP client and server library for [Beamtalk](https://beamtalk.dev).
 
-Built on [gun](https://github.com/ninenines/gun) (client) and [cowboy](https://github.com/ninenines/cowboy) (server).
+Built on [gun](https://github.com/ninenines/gun) (client) and
+[Buccaneer](https://github.com/jamesc/beamtalk-buccaneer) (server), a
+pure-Beamtalk HTTP/1.1, HTTP/2 and WebSocket engine. Since 0.3.0 the
+server no longer uses cowboy; see the [CHANGELOG](CHANGELOG.md) for
+what changed.
 
 ## Installation
 
@@ -10,7 +14,7 @@ Add the dependency to your `beamtalk.toml`:
 
 ```toml
 [dependencies]
-http = "0.2.0"
+http = "0.3.0"
 ```
 
 Then run:
@@ -57,44 +61,36 @@ srv port   // => 8080
 srv stop
 ```
 
-### Backend selection
+### Server engine
 
-The server runs on cowboy by default. Pass `#backend => #buccaneer`
-(or export `BEAMTALK_HTTP_BACKEND=buccaneer`) to serve through the
-pure-Beamtalk engine instead — the same handler, router, and test suite
-run unchanged on both:
+`HTTPServer` runs on Buccaneer, the only server engine since 0.3.0.
+Request handling to know about:
 
-```beamtalk
-srv := HTTPServer start: 0
-  handler: router
-  options: #{ #backend => #buccaneer }
-```
+- `req body` is capped at 8 MB (larger bodies answer 413), while
+  `req readChunk` streams past that in parts (below).
+- Responses are compressed when the client asks for it: a request with
+  `accept-encoding: gzip` (or `deflate`, or `zstd` on OTP 28+) gets an
+  encoded body, and responses carry `vary: accept-encoding` (except
+  204s). A handler opts one response out by setting its own
+  `content-encoding`, a strong `etag` or `cache-control: no-transform`.
+- Repeated request headers arrive as separate `#(name, value)` pairs.
+- Malformed percent-encoding or invalid UTF-8 in the query, an invalid
+  UTF-8 header value and malformed chunk framing answer 400 without
+  running the handler.
+- The handler is validated at start: a block, an `HTTPRouter`, or an
+  actor responding to `handle:` (anything else raises a `type_error`).
+  A port already in use raises a catchable `Error`.
+- `#bind` takes IPv4 dotted quads and IPv6 (with `::` compression and
+  embedded v4 tails).
 
-Known differences on the buccaneer backend:
+cowboy was removed in 0.3.0, along with the `#backend` option. Pin
+`http = "0.2.0"` to stay on cowboy.
 
-- `req body` is capped at 8 MB (larger ones answer 413), while
-  `req readChunk` streams past that in parts; cowboy reads unbounded
-  bodies.
-- Streaming (`streamWith:`, `file:`, `file:offset:length:` — below) needs
-  buccaneer: cowboy answers those values with a 500.
-- `#bind` takes IPv4 dotted quads and IPv6 (with `::` compression
-  and embedded v4 tails) on both backends.
-- Malformed percent-encoding in the query and malformed chunk framing
-  answer 400 (cowboy crashes those requests into a 500).
-- The handler is validated at start on both backends, matching
-  cowboy's rule: a block, an `HTTPRouter`, or an actor responding to
-  `handle:`.
-- A port already in use raises a catchable `Error` at start on
-  buccaneer; on cowboy the native listener failure escapes
-  `Result tryDo:`/`on:do:` and crashes the starting process.
-
-CI runs the suite on both backends; see `.github/workflows/ci.yml`.
-
-### Streaming (buccaneer backend)
+### Streaming
 
 Handlers answer one `HTTPResponse` value in three shapes. Plain values
 go out with `status`/`headers`/`body` as before. The other two stream,
-in bounded memory, and need `#backend => #buccaneer`:
+in bounded memory:
 
 ```beamtalk
 // Chunked: the adapter runs the block in the connection process.
@@ -139,17 +135,18 @@ Every handle here is owner-bound: `readChunk`, `inform:headers:` and
 the writer's methods (`startChunked:headers:`, `sendChunk:`, `finish`)
 work only in the connection process and raise a clear `#not_owner`
 error anywhere else. (`req body` answers the buffered body off-owner,
-so actors keep working; without an exchange, as on cowboy, `readChunk`
-and `inform:headers:` answer `Result error: #not_supported`.)
+so actors keep working; without an exchange, as in a hand-built
+request, `readChunk` and `inform:headers:` answer `Result error:
+#not_supported`.)
 
-### WebSocket (buccaneer backend)
+### WebSocket
 
 Any handler — block, router or `HTTPHandler` actor — upgrades a
 connection by answering `HTTPResponse upgradeWebSocket: HandlerClass`:
 
 ```beamtalk
 HTTPServer start: 8080 handler: [:req |
-  HTTPResponse upgradeWebSocket: EchoHandler] options: #{#backend => #buccaneer}
+  HTTPResponse upgradeWebSocket: EchoHandler]
 ```
 
 `HandlerClass` makes a `WebSocketHandler` Value that runs in the
@@ -247,8 +244,8 @@ Plug that needs live, mutable actor state.
 visibility:
 
 - **Block or `HTTPRouter`-compiled route** — invoked directly as a plain
-  function call in the backend's request-handling process (cowboy's
-  process, or the connection process on buccaneer). Any `self.field`
+  function call in the connection process that received the request.
+  Any `self.field`
   the block closes over is whatever was captured when the block/route
   table was built; it is never re-read, even if the underlying actor's
   state changes later (including `attachX:`-style dependency injection
@@ -262,8 +259,8 @@ Use a block/router/`PlugChain` for stateless request handling; back a route
 with an `HTTPHandler` actor when it needs live or post-startup-configurable
 state.
 
-An actor streams the same way every handler does, with `streamWith:`
-(buccaneer backend): the block is created in the actor but runs in the
+An actor streams the same way every handler does, with `streamWith:`:
+the block is created in the actor but runs in the
 connection process. It sees the actor's fields as captured when the block
 was made, assigning one raises `actor_state_unreachable`, and a send to
 `self` is an ordinary sync message to the actor — so the block can pull
@@ -283,7 +280,7 @@ Actor subclass: ReportHandler
 | Class | Description |
 |-------|-------------|
 | `HTTPClient` | Actor-based HTTP client for one-shot and persistent requests |
-| `HTTPServer` | HTTP server actor (cowboy default, buccaneer optional) |
+| `HTTPServer` | HTTP server actor, served by Buccaneer |
 | `HTTPRequest` | Incoming HTTP request representation |
 | `HTTPResponse` | HTTP response builder |
 | `HTTPRouter` | URL routing with method-based dispatch |

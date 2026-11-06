@@ -6,10 +6,14 @@
 // Tests cover:
 //   - Start/stop lifecycle
 //   - Ephemeral port assignment
+//   - Start-time validation (handler, port, bind)
 //   - Request handling with block handlers
-//   - HTTPRequest fields (method, path, body)
+//   - HTTPRequest fields (method, path, body) and their String class
 //   - Response status codes
 //   - printString
+//
+// BT-4087 folded the cowboy server's EUnit suite
+// (native/test/beamtalk_http_server_tests.erl) in here.
 
 TestCase subclass: HTTPServerTest
   field: srv = nil
@@ -30,6 +34,56 @@ TestCase subclass: HTTPServerTest
       HTTPResponse new: #{#status => 200, #body => "ok"}
     ]
     self assert: self.srv port > 0
+    self assert: self.srv port <= 65535
+
+  testStartAnswersLiveActor =>
+    self.srv := HTTPServer start: 0 handler: [:req |
+      HTTPResponse new: #{#status => 200, #body => "ok"}
+    ]
+    self assert: self.srv isAlive
+
+  testStopClosesListener =>
+    srv := HTTPServer start: 0 handler: [:req |
+      HTTPResponse new: #{#status => 200, #body => "ok"}
+    ]
+    port := srv port
+    srv stop
+    refused := (Erlang gen_tcp)
+      connect: {127, 0, 0, 1}
+      with: port
+      with: #(#binary, {#active, #false})
+    self assert: refused isError
+
+  testTwoServersGetDistinctPorts =>
+    handler := [:req | HTTPResponse new: #{#status => 200, #body => "ok"}]
+    self.srv := HTTPServer start: 0 handler: handler
+    other := HTTPServer start: 0 handler: handler
+    otherPort := other port
+    other stop
+    self deny: self.srv port =:= otherPort
+
+  // ===== Start-time validation =====
+  testInvalidHandlerRaisesTypeError =>
+    self should: [HTTPServer start: 0 handler: #notAHandler] raise: #type_error
+
+  testNegativePortRaises =>
+    outcome := Result
+      tryDo: [
+        HTTPServer start: -1 handler: [:req |
+          HTTPResponse new: #{#status => 200, #body => "ok"}
+        ]
+      ]
+    self assert: outcome isError
+
+  testNonStringBindRaises =>
+    outcome := Result
+      tryDo: [
+        HTTPServer
+          start: 0
+          handler: [:req | HTTPResponse new: #{#status => 200, #body => "ok"}]
+          options: #{#bind => 123}
+      ]
+    self assert: outcome isError
 
   testStopIsIdempotent =>
     self.srv := HTTPServer start: 0 handler: [:req |
@@ -78,6 +132,92 @@ TestCase subclass: HTTPServerTest
     url := "http://localhost:" ++ self.srv port asString ++ "/hello/world"
     resp := (HTTPClient get: url) unwrap
     self assert: resp body equals: "/hello/world"
+
+  // BT-4171: request text fields answer String (validated at the
+  // boundary). The handler checks the classes where they arrive and
+  // answers what it found.
+  testRequestTextFieldsAreStrings =>
+    self.srv := HTTPServer
+      start: 0
+      handler: [:req |
+        pairs := req headers
+        headersOk := pairs isEmpty not
+          and: [
+            pairs allSatisfy: [:pair |
+              ((pair at: 1) isKindOf: String) and: [
+                (pair at: 2) isKindOf: String
+              ]
+            ]
+          ]
+        query := req queryParams
+        queryOk := (query at: "name") =:= "Ada"
+          and: [
+            (query keys allSatisfy: [:k |
+              k isKindOf: String
+            ]) and: [query values allSatisfy: [:v | v isKindOf: String]]
+          ]
+        found := #((req method isKindOf: String), (req path isKindOf: String), (req body isKindOf: String), queryOk, headersOk)
+        HTTPResponse new: #{#status => 200, #body => found printString}
+      ]
+    url := "http://127.0.0.1:" ++ self.srv port asString ++ "/hello?name=Ada"
+    resp := (HTTPClient get: url) unwrap
+    self assert: resp status equals: 200
+    self assert: resp body equals: #(true, true, true, true, true) printString
+
+  testRequestBodyArrivesAsString =>
+    self.srv := HTTPServer
+      start: 0
+      handler: [:req |
+        body := req body
+        HTTPResponse new: #{
+          #status => 200,
+          #body => (body isKindOf: String) printString ++ ":" ++ body
+        }
+      ]
+    url := "http://127.0.0.1:" ++ self.srv port asString ++ "/echo"
+    resp := (HTTPClient post: url body: "test data") unwrap
+    self assert: resp body equals: "true:test data"
+
+  testRouteParamsAreStrings =>
+    router := HTTPRouter
+      routes: #(HTTPRoute
+        get: "/users/:id"
+        handler: [:req |
+          params := req params
+          allText := params keys allSatisfy: [:k | k isKindOf: String]
+          allText := allText and: [
+            params values allSatisfy: [:v | v isKindOf: String]
+          ]
+          HTTPResponse new: #{
+            #status => 200,
+            #body => allText printString ++ ":" ++ (req param: "id")
+          }
+        ])
+    self.srv := HTTPServer start: 0 handler: router
+    url := "http://127.0.0.1:" ++ self.srv port asString ++ "/users/42"
+    resp := (HTTPClient get: url) unwrap
+    self assert: resp body equals: "true:42"
+
+  // %FF percent-decodes to <<255>>, which is not valid UTF-8: the
+  // boundary answers 400 and the handler never runs.
+  testInvalidUtf8QueryValueAnswers400 =>
+    (Ets exists: #httpServerTestHits) ifTrue: [
+      (Ets named: #httpServerTestHits) delete
+    ]
+    hits := Ets new: #httpServerTestHits type: #set
+    self.srv := HTTPServer
+      start: 0
+      handler: [:req |
+        (Ets named: #httpServerTestHits) at: #ran put: true
+        HTTPResponse new: #{#status => 200, #body => "ok"}
+      ]
+    url := "http://127.0.0.1:" ++ self.srv port asString ++ "/hello?name=%FF"
+    resp := (HTTPClient get: url) unwrap
+    ran := hits at: #ran ifAbsent: [false]
+    hits delete
+    self assert: resp status equals: 400
+    self assert: resp body equals: "Bad Request: invalid UTF-8 in query"
+    self deny: ran
 
   // ===== Response codes =====
   testCustomStatusCode =>
@@ -182,7 +322,7 @@ TestCase subclass: HTTPServerTest
       with: 2000) unwrap
     head concat: body asStringUnchecked
 
-  // ===== IPv6 dialing (backend-agnostic: runs on both backends in CI) =====
+  // ===== IPv6 dialing =====
   testClientDialsIpv6Literal =>
     self.srv := HTTPServer
       start: 0
@@ -193,26 +333,22 @@ TestCase subclass: HTTPServerTest
     self assert: resp status equals: 200
     self assert: resp body equals: "v6dial"
 
-  // ===== Streaming values need buccaneer (explicit cowboy) =====
-  testStreamWithOnCowboyBecomes500 =>
-    self.srv := HTTPServer
-      start: 0
-      handler: [:req | HTTPResponse streamWith: [:resp | resp finish]]
-      options: #{#backend => #cowboy}
-    url := "http://localhost:" ++ self.srv port asString ++ "/stream"
-    resp := (HTTPClient get: url) unwrap
-    self assert: resp status equals: 500
-
-  testFileOnCowboyBecomes500 =>
+  // Streaming values work on the only backend; cowboy 500'd them.
+  testStreamWithServes =>
     self.srv := HTTPServer
       start: 0
       handler: [:req |
-        ((HTTPResponse file: "test/fixtures/stream_file") withStatus: 200)
+        HTTPResponse
+          streamWith: [:resp |
+            resp startChunked: 200 headers: #(#("content-type", "text/plain"))
+            resp sendChunk: "streamed"
+            resp finish
+          ]
       ]
-      options: #{#backend => #cowboy}
-    url := "http://localhost:" ++ self.srv port asString ++ "/file"
+    url := "http://localhost:" ++ self.srv port asString ++ "/stream"
     resp := (HTTPClient get: url) unwrap
-    self assert: resp status equals: 500
+    self assert: resp status equals: 200
+    self assert: resp body equals: "streamed"
 
   // ===== Identity =====
   testPrintString =>

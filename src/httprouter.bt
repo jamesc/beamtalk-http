@@ -66,8 +66,8 @@
 /// live actor state, or state that can change after startup, back it with
 /// an actor implementing `HTTPHandler>>handle:` instead of a route block.
 sealed Value subclass: HTTPRouter
-  /// Compiled route table (opaque Erlang term, internal).
-  field: compiledRoutes = nil
+  /// Compiled route table: `{method, segments, handler}` tuples (internal).
+  field: compiledRoutes :: List(Tuple) = #()
   /// Custom not-found handler (internal).
   field: notFoundHandler :: Block(HTTPRequest, HTTPResponse) | Nil = nil
   /// Number of routes in this router.
@@ -104,11 +104,16 @@ sealed Value subclass: HTTPRouter
     self compileRoutes: routeArray notFoundHandler: nil
 
   /// Internal: compile a list of HTTPRoute values into a frozen router.
+  ///
+  /// Each route becomes a `{method, segments, handler}` tuple. A path
+  /// pattern splits on `/` (empty parts dropped, so a trailing slash is
+  /// ignored) into `{kind, text}` segments: `#literal` for an exact
+  /// segment, `#param` for `:name` and `#wildcard` for `*name`. Raises a
+  /// `type_error` for a route that is not a String method, String path
+  /// and block handler, for a wildcard that is not the last segment, and
+  /// for a parameter name used twice in one pattern.
   class compileRoutes: routeArray :: List(HTTPRoute) notFoundHandler: notFoundHandler :: Block(HTTPRequest, HTTPResponse) | Nil -> HTTPRouter =>
-    rawRoutes := routeArray collect: [:route |
-      #(route method, route path, route handler)
-    ]
-    compiled := (Erlang beamtalk_http_router) compile: rawRoutes
+    compiled := routeArray collect: [:route | self compileRoute: route]
     self
       new: #{
         #compiledRoutes => compiled,
@@ -116,16 +121,118 @@ sealed Value subclass: HTTPRouter
         #routeCount => routeArray size
       }
 
+  /// One `HTTPRoute` to its `{method, segments, handler}` tuple.
+  class compileRoute: route -> Tuple =>
+    (route isKindOf: HTTPRoute) ifFalse: [
+      self badRoute: "Each route must be an HTTPRoute"
+    ]
+    method := route method
+    path := route path
+    handler := route handler
+    ((method isKindOf: String) and: [
+      (path isKindOf: String) and: [handler isKindOf: Block]
+    ]) ifFalse: [self badRoute: "Each route must be [Method, Path, Handler]"]
+    segments := (self splitPath: path) collect: [:part |
+      self parseSegment: part
+    ]
+    self validate: segments pattern: path
+    {method, segments, handler}
+
+  /// A pattern segment to `{kind, text}`: `:name` is a `#param`, `*name`
+  /// a `#wildcard` (a bare `:` or `*` stays literal), anything else a
+  /// `#literal`.
+  class parseSegment: part :: String -> Tuple =>
+    (part size > 1 and: [
+      part startsWith: ":"
+    ]) ifTrue: [^{#param, part drop: 1}]
+    (part size > 1 and: [
+      part startsWith: "*"
+    ]) ifTrue: [^{#wildcard, part drop: 1}]
+    {#literal, part}
+
+  /// Reject a wildcard before the last segment and a parameter name used
+  /// twice in one pattern.
+  class validate: segments :: List(Tuple) pattern: path :: String -> Nil =>
+    names := #()
+    last := segments size
+    i := 0
+    segments
+      do: [:seg |
+        i := i + 1
+        {kind, text} := seg
+        (kind =:= #wildcard and: [
+          i < last
+        ]) ifTrue: [
+          self badRoute: "Wildcard must be the last segment in pattern: " ++ path
+        ]
+        kind =:= #literal
+          ifFalse: [
+            (names includes: text) ifTrue: [
+              self badRoute: "Duplicate parameter names in pattern: " ++ path
+            ]
+            names := names add: text
+          ]
+      ]
+    nil
+
+  class badRoute: hint :: String -> Never =>
+    Exception
+      signalKind: #type_error
+      class: #HTTPRouter
+      selector: #compile:
+      hint: hint
+
+  /// A URL path to its segments, dropping empty parts (`"/a//b/"` is
+  /// `#("a", "b")`). Segments stay raw: no percent-decoding.
+  class splitPath: path :: String -> List(String) =>
+    (path split: "/") reject: [:part | part isEmpty]
+
+  /// The parameters `pattern` captures from `segs`, or nil when it does
+  /// not match.
+  class match: pattern :: List(Tuple) segments: segs :: List(String) -> Dictionary(String, String) | Nil =>
+    params := #{}
+    rest := segs
+    pattern
+      do: [:seg |
+        rest isEmpty ifTrue: [^nil]
+        {kind, text} := seg
+        kind =:= #wildcard ifTrue: [^params at: text put: (rest join: "/")]
+        current := rest first
+        kind =:= #param ifTrue: [
+          params := params at: text put: current
+        ] ifFalse: [current =:= text ifFalse: [^nil]]
+        rest := rest rest
+      ]
+    rest isEmpty ifTrue: [params] ifFalse: [nil]
+
   /// Match a method and path against this router's compiled routes.
   ///
-  /// Answers `{ok, handler, params}`, `#method_not_allowed` or
-  /// `#not_found`. Internal plumbing for the server backends — the
-  /// matcher itself stays native until Phase 8.
+  /// Answers `{#ok, handler, params}` for the first route whose pattern
+  /// and method both match, `#method_not_allowed` when some pattern
+  /// matched but no route with that method did, and `#not_found`
+  /// otherwise. `params` maps each `:name` / `*name` to its raw
+  /// segment (a wildcard joins what it took with `/`, and needs at
+  /// least one segment).
+  ///
+  /// ## Examples
+  /// ```beamtalk
+  /// router match: "GET" path: "/users/42"   // => {#ok, aBlock, #{"id" => "42"}}
+  /// router match: "POST" path: "/users/42"  // => #method_not_allowed
+  /// ```
   match: method :: String path: path :: String -> Object =>
-    (Erlang beamtalk_http_router)
-      match: self compiledRoutes
-      with: method
-      with: path
+    segs := HTTPRouter splitPath: path
+    pathMatched := false
+    self.compiledRoutes
+      do: [:route |
+        {routeMethod, pattern, h} := route
+        params := HTTPRouter match: pattern segments: segs
+        params isNil
+          ifFalse: [
+            routeMethod =:= method ifTrue: [^{#ok, h, params}]
+            pathMatched := true
+          ]
+      ]
+    pathMatched ifTrue: [#method_not_allowed] ifFalse: [#not_found]
 
   /// Human-readable representation: "an HTTPRouter(6 routes)".
   printString -> String =>

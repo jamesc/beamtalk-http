@@ -1,13 +1,11 @@
 // Copyright 2026 James Casey
 // SPDX-License-Identifier: Apache-2.0
 
-/// Edge cases for the buccaneer backend that the shared server suite
+/// Edge cases for the Buccaneer adapter that the shared server suite
 /// does not hit: mapping details (duplicate headers, query shapes,
 /// chunked and 100-continue bodies, non-UTF-8 bodies), failure paths
-/// (raise, non-response, over-large body) and backend plumbing
-/// (router dispatch, actor handlers, `#bind`, backend selection).
-/// Every test pins `#backend => #buccaneer` explicitly, so this file
-/// behaves identically with and without `BEAMTALK_HTTP_BACKEND` set.
+/// (raise, non-response, over-large body) and server plumbing (router
+/// dispatch, actor handlers, `#bind`).
 TestCase subclass: HttpExchangeAdapterTest
   field: srv = nil
 
@@ -15,17 +13,13 @@ TestCase subclass: HttpExchangeAdapterTest
     self.srv isNil ifFalse: [self.srv stop]
     self.srv := nil
 
-  startBuccaneer: handler =>
-    HTTPServer
-      start: 0
-      handler: handler
-      options: #{#backend => #buccaneer}
+  startBuccaneer: handler => HTTPServer start: 0 handler: handler
 
   startBuccaneer: handler options: extra =>
     HTTPServer
       start: 0
       handler: handler
-      options: (#{#backend => #buccaneer} merge: extra)
+      options: extra
 
   baseUrl => "http://localhost:" ++ self.srv port asString
 
@@ -289,16 +283,6 @@ TestCase subclass: HttpExchangeAdapterTest
     resp := (HTTPClient get: self baseUrl ++ "/") unwrap
     self assert: resp body equals: "bound"
 
-  testUnknownBackendRaises =>
-    outcome := Result
-      tryDo: [
-        HTTPServer
-          start: 0
-          handler: [:req | nil]
-          options: #{#backend => #bogus}
-      ]
-    self assert: outcome isError
-
   testPortInUseRaises =>
     self.srv := self startBuccaneer: [:req |
       HTTPResponse new: #{#status => 200, #body => "ok"}
@@ -306,10 +290,9 @@ TestCase subclass: HttpExchangeAdapterTest
     used := self.srv port
     clash := Result
       tryDo: [
-        HTTPServer
-          start: used
-          handler: [:req | HTTPResponse new: #{#status => 200, #body => "no"}]
-          options: #{#backend => #buccaneer}
+        HTTPServer start: used handler: [:req |
+          HTTPResponse new: #{#status => 200, #body => "no"}
+        ]
       ]
     self assert: clash isError
 
@@ -373,7 +356,7 @@ TestCase subclass: HttpExchangeAdapterTest
         HTTPServer
           start: 0
           handler: [:req | nil]
-          options: #{#backend => #buccaneer, #bind => "not-an-ip"}
+          options: #{#bind => "not-an-ip"}
       ]
     self assert: outcome isError
 
@@ -382,29 +365,6 @@ TestCase subclass: HttpExchangeAdapterTest
     self assert: garbage isError
     nilHandler := Result tryDo: [self startBuccaneer: nil]
     self assert: nilHandler isError
-
-  testResolveBackendMatrix =>
-    orig := System getEnv: "BEAMTALK_HTTP_BACKEND"
-    System setEnv: "BEAMTALK_HTTP_BACKEND" value: "buccaneer"
-    fromEnv := HTTPServer resolveBackend: #{}
-    System setEnv: "BEAMTALK_HTTP_BACKEND" value: "bogus"
-    bogusOutcome := Result tryDo: [HTTPServer resolveBackend: #{}]
-    System setEnv: "BEAMTALK_HTTP_BACKEND" value: ""
-    emptyEnv := HTTPServer resolveBackend: #{}
-    System setEnv: "BEAMTALK_HTTP_BACKEND" value: (orig isNil ifTrue: [
-      ""
-    ] ifFalse: [orig])
-    self assert: fromEnv equals: #buccaneer
-    self assert: bogusOutcome isError
-    self assert: emptyEnv equals: #cowboy
-    self assert: (HTTPServer resolveBackend: #{
-      #backend => #cowboy
-    }) equals: #cowboy
-    self
-      assert: (HTTPServer resolveBackend: #{})
-      equals: (orig isNil ifTrue: [
-        #cowboy
-      ] ifFalse: [orig =:= "buccaneer" ifTrue: [#buccaneer] ifFalse: [#cowboy]])
 
   testNibbleBounds =>
     self assert: (QueryParser nibble: "0") equals: 0

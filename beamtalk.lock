@@ -26,22 +26,12 @@ reference = "tag:v0.1.0"
 sha = "9af67255360391e8eb89a47205db4cac51bf1b72"
 
 [[native_package]]
-name = "cowboy"
-version = "2.18.0"
-sha = ""
-
-[[native_package]]
 name = "cowlib"
-version = "2.21.0"
+version = "2.13.0"
 sha = ""
 
 [[native_package]]
 name = "gun"
 version = "2.1.0"
-sha = ""
-
-[[native_package]]
-name = "ranch"
-version = "2.3.0"
 sha = ""
 

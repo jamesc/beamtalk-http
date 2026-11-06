@@ -7,8 +7,8 @@
 /// Runs inside the connection process: builds an `HTTPRequest` from the
 /// `Exchange`, dispatches to a block, an `HTTPHandler` actor or an
 /// `HTTPRouter`, and answers with `sendResp:`, `sendFile:` or a streamed
-/// `streamWith:` block. Behaviour differences from cowboy are noted in
-/// the README.
+/// `streamWith:` block. Behaviour differences from the cowboy server
+/// that 0.2 shipped are listed in the CHANGELOG (0.3.0).
 Object subclass: HttpExchangeAdapter
 
   /// Largest request body read at once (8 MB, as Bandit): `req body`
@@ -19,8 +19,7 @@ Object subclass: HttpExchangeAdapter
   /// `HTTPResponse`. Answers 400 for a request the handler must never
   /// see (non-UTF-8 header value or query part, malformed body framing),
   /// 413 for an over-large body, and 500 for anything else — a raise in
-  /// the handler or a non-`HTTPResponse` answer included, as the cowboy
-  /// backend does. The engine strips HEAD/204/304 bodies itself and
+  /// the handler or a non-`HTTPResponse` answer included. The engine strips HEAD/204/304 bodies itself and
   /// sends `100 Continue` when the handler first reads the body.
   ///
   /// Engine errors pass through untouched: `TransportError` (dead
@@ -30,8 +29,8 @@ Object subclass: HttpExchangeAdapter
   /// `streamWith:` block raising after `startChunked:headers:`): a 500 is
   /// impossible then, so the engine closes the connection and logs it.
   ///
-  /// Decides the handler's shape on every call; `HTTPBuccaneerServer`
-  /// decides it once at start and calls `serve:handler:kind:` instead.
+  /// Decides the handler's shape on every call; `HTTPServer` decides it
+  /// once at start and calls `serve:handler:kind:` instead.
   class serve: ex :: Exchange handler: handler -> Object =>
     self
       serve: ex
@@ -79,8 +78,8 @@ Object subclass: HttpExchangeAdapter
     raw := ex headers
     headers := self requestHeaders: raw
     headers isNil ifTrue: [^self send400: ex reason: "invalid UTF-8 in header"]
-    // Actor handlers get the whole body before dispatch, as the cowboy
-    // backend reads it; blocks and routers read it lazily through
+    // Actor handlers get the whole body before dispatch (they run in
+    // another process); blocks and routers read it lazily through
     // `req body` / `req readChunk`.
     preRead := kind =:= #actor
     body := ""
@@ -190,9 +189,8 @@ Object subclass: HttpExchangeAdapter
       _ -> nil
     ]
 
-  /// Dispatch to a block, an `HTTPHandler` actor (a real actor send, as
-  /// the cowboy backend does) or an `HTTPRouter`. The router matcher
-  /// stays native, shared with the cowboy backend.
+  /// Dispatch to a block, an `HTTPHandler` actor (a real actor send) or
+  /// an `HTTPRouter`.
   class dispatch: handler kind: kind :: Symbol request: req :: HTTPRequest -> Object =>
     kind match: [
       #block -> handler value: req;
@@ -232,7 +230,7 @@ Object subclass: HttpExchangeAdapter
   /// lowercase Strings by the time the engine hands them over; values
   /// are Strings, or opaque Binaries when the engine could not decode
   /// them (HTTP/2 values, non-UTF-8 HTTP/1 values). A Binary must be
-  /// valid UTF-8, which cowboy also insists on: answer nil otherwise so
+  /// valid UTF-8: answer nil otherwise so
   /// the caller sends 400 without running the handler.
   class requestHeaders: headers -> List(List(String)) | Nil =>
     headers
@@ -254,8 +252,7 @@ Object subclass: HttpExchangeAdapter
       ]
 
   /// The whole body: a String when valid UTF-8, a Binary otherwise.
-  /// Before dispatch (actor handlers, as the cowboy backend reads it
-  /// before dispatch) and after it (draining an unread body before a
+  /// Before dispatch (actor handlers) and after it (draining an unread body before a
   /// plain or file response). Answers nil after sending 400 (malformed
   /// framing — the engine raises `HTTPError` for those, documented
   /// there as "a 400") or 413 (over-large body). A dead socket signals
@@ -295,11 +292,9 @@ Object subclass: HttpExchangeAdapter
     headers collect: [:pair | {(pair at: 1), (pair at: 2)}]
 
   /// A `#bind` address to the `{ip, inet6?}` pair Catalina's transport
-  /// options take, via OTP's `inet:parse_address/1` — the same parser
-  /// cowboy uses. The `String` becomes a charlist with
+  /// options take, via OTP's `inet:parse_address/1`. The `String` becomes a charlist with
   /// `Binary>>asCharlist` (UTF-8 bytes, not graphemes), since the FFI
-  /// boundary maps a `String` arg to a binary. Anything else raises
-  /// like the cowboy backend does.
+  /// boundary maps a `String` arg to a binary. Anything else raises.
   class parseBind: bind :: String -> Tuple =>
     parsed := (Erlang inet) parse_address: (bind asCharlist)
     parsed isError ifTrue: [self badBind]

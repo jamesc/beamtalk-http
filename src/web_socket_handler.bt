@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// WebSocketHandler — protocol for Value handlers that serve one
-/// WebSocket connection on the buccaneer backend.
+/// WebSocket connection.
 ///
 /// Answer `HTTPResponse upgradeWebSocket: HandlerClass` from a block,
 /// router or `HTTPHandler` actor and the adapter runs the connection

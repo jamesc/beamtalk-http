@@ -3,8 +3,8 @@
 
 // BT-1117: BUnit integration tests for HTTPResponse and HTTPClient.
 //
-// Starts a local cowboy test server (beamtalk_http_test_server) and runs
-// integration tests against it.  Tests cover:
+// Starts a local test server (HTTPTestServer, an HTTPServer fixture in
+// test/fixtures) and runs integration tests against it.  Tests cover:
 //   - HTTPResponse value methods (status, ok, body, headers, bodyAsJson)
 //   - HTTPClient class-side one-shot methods (get:, post:body:, put:body:,
 //     delete:, request:url:options:)
@@ -21,14 +21,16 @@
 
 TestCase subclass: HTTPTest
   field: baseUrl = ""
+  field: server = nil
 
   // Start the local test server and record the base URL.
   setUp =>
-    port := (Erlang beamtalk_http_test_server) start
-    self withBaseUrl: ("http://localhost:" ++ port asString)
+    self.server := HTTPTestServer start
+    self.baseUrl := "http://localhost:" ++ self.server port asString
+    self
 
   // Stop the local test server after each test.
-  tearDown => (Erlang beamtalk_http_test_server) stop
+  tearDown => self.server isNil ifFalse: [self.server stop]
 
   // ===== HTTPResponse — status =====
   testResponseStatusEquals200 =>
