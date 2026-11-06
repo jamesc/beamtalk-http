@@ -1,8 +1,8 @@
 You are reviewing a pull request for beamtalk-http: the HTTP client and server library for BeamTalk, built on gun (client) and
-cowboy (server).
+Buccaneer (server, a pure-BeamTalk engine).
 
 BeamTalk is a Smalltalk-inspired language that compiles to the BEAM (Erlang VM). This is a
-standalone package repo: library sources live in `src/*.bt`, the Erlang FFI shims over gun and cowboy in
+standalone package repo: library sources live in `src/*.bt`, the Erlang FFI shims over gun in
 `native/*.erl`, BUnit tests in `test/*_test.bt`, and the package manifest is `beamtalk.toml`. The BeamTalk compiler, runtime and stdlib live in the
 upstream `jamesc/beamtalk` repo and are NOT checked out here.
 
@@ -83,7 +83,7 @@ DOMAIN LENSES:
 - Untrusted input and connection lifecycle: this library terminates HTTP from the outside
   world. Check header and body size limits, request parsing against malformed and truncated
   input, path handling in the router (traversal, unescaped segments, greedy wildcards), and
-  that gun/cowboy connections and streams are closed on EVERY path — including error,
+  that gun connections and Buccaneer exchanges and streams are closed on EVERY path — including error,
   timeout and client-disconnect.
 - BeamTalk library code (`src/*.bt`): the exported classes ARE the public API. Check that
   new/changed selectors are consistent with the existing ones, that errors are returned in

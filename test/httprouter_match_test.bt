@@ -1,0 +1,244 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+// BT-4087: route compilation and matching, without a server. Ported from
+// the native router's EUnit suite (native/test/beamtalk_http_router_tests.erl)
+// when the matcher moved to Beamtalk: exact paths, parameterized routes,
+// wildcards, method dispatch, 404/405, route priority and compile-time
+// validation. `HTTPRouterTest` covers the same router behind a server.
+
+TestCase subclass: HTTPRouterMatchTest
+
+  /// A route whose handler answers `tag` as its body, so a match can be
+  /// told apart by running the handler it picked.
+  route: method :: String path: path :: String tag: tag :: String -> HTTPRoute =>
+    HTTPRoute
+      new: #{
+        #method => method,
+        #path => path,
+        #handler => [:req | HTTPResponse new: #{#status => 200, #body => tag}]
+      }
+
+  /// The tag of the route `method` and `path` select, or the router's
+  /// `#not_found` / `#method_not_allowed` answer.
+  tagOf: router :: HTTPRouter method: method :: String path: path :: String -> Object =>
+    matched := router match: method path: path
+    (matched isKindOf: Symbol) ifTrue: [^matched]
+    {_, handler, _} := matched
+    (handler value: HTTPRequest new) body
+
+  /// The params `method` and `path` capture.
+  paramsOf: router :: HTTPRouter method: method :: String path: path :: String -> Object =>
+    matched := router match: method path: path
+    {_, _, params} := matched
+    params
+
+  one: method :: String path: path :: String -> HTTPRouter =>
+    HTTPRouter
+      routes: #(self
+        route: method
+        path: path
+        tag: "only")
+
+  // ===== Compilation =====
+  testCompileEmptyRoutes =>
+    router := HTTPRouter routes: #()
+    self assert: router routeCount equals: 0
+
+  testCompileSingleRoute =>
+    self assert: (self one: "GET" path: "/hello") routeCount equals: 1
+
+  testCompileMultipleRoutes =>
+    router := HTTPRouter
+      routes: #(self
+        route: "GET"
+        path: "/"
+        tag: "a", self
+        route: "POST"
+        path: "/users"
+        tag: "b", self
+        route: "GET"
+        path: "/users/:id"
+        tag: "c")
+    self assert: router routeCount equals: 3
+
+  // ===== Exact match =====
+  testMatchRootPath =>
+    router := self one: "GET" path: "/"
+    self
+      assert: (self
+        tagOf: router
+        method: "GET"
+        path: "/")
+      equals: "only"
+    self
+      assert: (self
+        paramsOf: router
+        method: "GET"
+        path: "/")
+      equals: #{}
+
+  testMatchSimplePath =>
+    router := self one: "GET" path: "/hello"
+    self
+      assert: (self
+        tagOf: router
+        method: "GET"
+        path: "/hello")
+      equals: "only"
+    self
+      assert: (self
+        paramsOf: router
+        method: "GET"
+        path: "/hello")
+      equals: #{}
+
+  testMatchNestedPath =>
+    router := self one: "GET" path: "/api/v1/users"
+    self
+      assert: (self
+        paramsOf: router
+        method: "GET"
+        path: "/api/v1/users")
+      equals: #{}
+
+  // ===== Parameterized routes =====
+  testMatchSingleParam =>
+    router := self one: "GET" path: "/users/:id"
+    self
+      assert: (self
+        paramsOf: router
+        method: "GET"
+        path: "/users/42")
+      equals: #{"id" => "42"}
+
+  testMatchMultipleParams =>
+    router := self one: "GET" path: "/users/:userId/posts/:postId"
+    params := self
+      paramsOf: router
+      method: "GET"
+      path: "/users/7/posts/99"
+    self assert: params equals: #{"userId" => "7", "postId" => "99"}
+
+  testParamCapturesAnySegment =>
+    router := self one: "GET" path: "/files/:name"
+    params := self
+      paramsOf: router
+      method: "GET"
+      path: "/files/my-document.txt"
+    self assert: params equals: #{"name" => "my-document.txt"}
+
+  // ===== Wildcards =====
+  testMatchWildcardSingleSegment =>
+    router := self one: "GET" path: "/static/*path"
+    params := self
+      paramsOf: router
+      method: "GET"
+      path: "/static/style.css"
+    self assert: params equals: #{"path" => "style.css"}
+
+  testMatchWildcardMultipleSegments =>
+    router := self one: "GET" path: "/static/*path"
+    params := self
+      paramsOf: router
+      method: "GET"
+      path: "/static/css/main.css"
+    self assert: params equals: #{"path" => "css/main.css"}
+
+  // ===== Method dispatch =====
+  testMatchCorrectMethod =>
+    router := HTTPRouter
+      routes: #(self
+        route: "GET"
+        path: "/items"
+        tag: "get", self
+        route: "POST"
+        path: "/items"
+        tag: "post")
+    self
+      assert: (self
+        tagOf: router
+        method: "GET"
+        path: "/items")
+      equals: "get"
+    self
+      assert: (self
+        tagOf: router
+        method: "POST"
+        path: "/items")
+      equals: "post"
+
+  // ===== Not found / method not allowed =====
+  testNotFoundWhenNoMatch =>
+    router := self one: "GET" path: "/hello"
+    self assert: (router match: "GET" path: "/world") equals: #not_found
+
+  testNotFoundOnEmptyRoutes =>
+    router := HTTPRouter routes: #()
+    self assert: (router match: "GET" path: "/") equals: #not_found
+
+  testMethodNotAllowed =>
+    router := self one: "GET" path: "/items"
+    self assert: (router match: "POST" path: "/items") equals: #method_not_allowed
+
+  testMethodNotAllowedWithParams =>
+    router := self one: "GET" path: "/users/:id"
+    self assert: (router match: "DELETE" path: "/users/42") equals: #method_not_allowed
+
+  // ===== Route priority =====
+  testFirstMatchingRouteWins =>
+    router := HTTPRouter
+      routes: #(self
+        route: "GET"
+        path: "/users/:id"
+        tag: "first", self
+        route: "GET"
+        path: "/users/:name"
+        tag: "second")
+    self
+      assert: (self
+        tagOf: router
+        method: "GET"
+        path: "/users/42")
+      equals: "first"
+
+  testExactBeforeParamWhenOrdered =>
+    router := HTTPRouter
+      routes: #(self
+        route: "GET"
+        path: "/users/me"
+        tag: "exact", self
+        route: "GET"
+        path: "/users/:id"
+        tag: "param")
+    self
+      assert: (self
+        tagOf: router
+        method: "GET"
+        path: "/users/me")
+      equals: "exact"
+
+  // ===== Edge cases =====
+  testTrailingSlashIsEquivalent =>
+    router := self one: "GET" path: "/hello"
+    self
+      assert: (self
+        tagOf: router
+        method: "GET"
+        path: "/hello/")
+      equals: "only"
+
+  testWildcardRequiresAtLeastOneSegment =>
+    router := self one: "GET" path: "/static/*path"
+    self assert: (router match: "GET" path: "/static/") equals: #not_found
+
+  // ===== Compile-time validation =====
+  testWildcardMustBeLastSegment =>
+    self should: [
+      self one: "GET" path: "/static/*path/subdir"
+    ] raise: #type_error
+
+  testDuplicateParamNamesRejected =>
+    self should: [
+      self one: "GET" path: "/users/:id/posts/:id"
+    ] raise: #type_error

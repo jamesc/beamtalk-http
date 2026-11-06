@@ -9,12 +9,12 @@
 /// its own stateless unit so any backend adapter maps the same way.
 Object subclass: QueryParser
 
-  /// Raw query string to parameters, with cowboy's rules: `?flag`
+  /// Raw query string to parameters, with cowboy's `parse_qs` rules (as
+  /// beamtalk-http 0.2 parsed them): `?flag`
   /// means `"true"`, `+` is a space, `%XX` decodes a byte, and empty
   /// segments (a trailing or doubled `&`) are skipped. Answers nil
-  /// when a part is not valid UTF-8 — the cowboy backend crashes on
-  /// those (a 500), so a nil here (which the caller turns into a 400)
-  /// is the deliberate friendlier shape.
+  /// when a part is not valid UTF-8, which the caller turns into a 400
+  /// (the 0.2 cowboy server crashed on those into a 500).
   class parse: query :: String | Nil -> Dictionary(String, String) | Nil =>
     query isNil ifTrue: [^#{}]
     query =:= "" ifTrue: [^#{}]

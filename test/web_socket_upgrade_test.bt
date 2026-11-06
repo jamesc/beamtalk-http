@@ -1,7 +1,7 @@
 // Copyright 2026 James Casey
 // SPDX-License-Identifier: Apache-2.0
 
-/// Upgrade tests over TCP on the buccaneer backend: the 101, text
+/// Upgrade tests over TCP: the 101, text
 /// and binary echoes, the actor pattern round-trip and the close
 /// reason. Callback routing itself is covered without a server in
 /// `WebSocketAdapterTest`.
@@ -23,10 +23,9 @@ TestCase subclass: WebSocketUpgradeTest
     ]
 
   startWith: handlerClass :: Object -> Integer =>
-    self.srv := HTTPServer
-      start: 0
-      handler: [:req | HTTPResponse upgradeWebSocket: handlerClass]
-      options: #{#backend => #buccaneer}
+    self.srv := HTTPServer start: 0 handler: [:req |
+      HTTPResponse upgradeWebSocket: handlerClass
+    ]
     self.srv port
 
   shake: port :: Integer -> Object =>

@@ -102,7 +102,7 @@ sealed Value subclass: HTTPResponse
   /// ## Examples
   /// ```beamtalk
   /// HTTPServer start: 8080 handler: [:req |
-  ///   HTTPResponse upgradeWebSocket: EchoHandler] options: #{#backend => #buccaneer}
+  ///   HTTPResponse upgradeWebSocket: EchoHandler]
   /// ```
   class upgradeWebSocket: handlerClass :: Object -> HTTPResponse =>
     self new: #{#websocketHandler => handlerClass}
