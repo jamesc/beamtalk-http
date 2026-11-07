@@ -88,6 +88,9 @@ Object subclass: BenchMain
   // hash like) Strings: normalize to text once, here.
   class parseArgs: args into: opts =>
     args isEmpty ifTrue: [^opts]
+    (args size) < 2 ifTrue: [
+      Error signal: "bench flag without value: " ++ (args at: 1) asStringUnchecked
+    ]
     self parseArgs: (args drop: 2) into: (opts at: ((args at: 1) asStringUnchecked) put: ((args at: 2) asStringUnchecked))
 
   class allDone: workers out: out =>

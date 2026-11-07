@@ -147,7 +147,11 @@ Actor subclass: BenchWorker
     conn := self openH2
     [(Time monotonic: #millisecond) < self.deadlineMs]
       whileTrue: [
-        conn isNil ifTrue: [conn := self openH2]
+        conn isNil
+          ifTrue: [
+            conn := self openH2
+            conn isNil ifTrue: [Timer sleep: 10]
+          ]
         conn isNil
           ifFalse: [
             out := self wave: conn errs: errs

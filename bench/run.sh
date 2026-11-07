@@ -83,8 +83,10 @@ mkdir -p "$raw"
 
 setup_gun() {
   local gunwb="$root/_build/bench/beamtalk-http-gun"
-  if [[ ! -d "$gunwb/.git" && ! -f "$gunwb/beamtalk.toml" ]]; then
+  if [[ ! -e "$gunwb/.git" || ! -f "$gunwb/beamtalk.toml" ]]; then
     echo "== setting up gun worktree at $GUN_REV =="
+    git -C "$root" worktree remove --force "$gunwb" >/dev/null 2>&1 || true
+    rm -rf "$gunwb"
     git -C "$root" worktree add --detach "$gunwb" "$GUN_REV" >/dev/null 2>&1
   fi
   rm -rf "$gunwb/bench"
