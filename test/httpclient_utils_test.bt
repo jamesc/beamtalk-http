@@ -128,6 +128,15 @@ TestCase subclass: HTTPClientUtilsTest
   testCheckTimeoutAcceptsZero =>
     self assert: (HTTPClient checkTimeout: 0) equals: 0
 
+  // ===== remaining:from: — shared deadline =====
+  testRemainingFreshStartKeepsBudget =>
+    left := HTTPClient remaining: 1000 from: HTTPClient nowMs
+    self assert: (left > 990)
+
+  testRemainingSpentBudgetAnswersZero =>
+    start := HTTPClient nowMs - 5000
+    self assert: (HTTPClient remaining: 1000 from: start) equals: 0
+
   testCheckTimeoutRejectsNegative =>
     self should: [HTTPClient checkTimeout: -1] raise: #type_error
 

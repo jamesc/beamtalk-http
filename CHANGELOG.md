@@ -26,7 +26,10 @@ Behaviour notes:
   server closed it); one-shot class methods still connect per request.
 - **Timeouts.** The `#timeout` option still bounds a request, but the
   connect phase now shares the request timeout instead of gun's
-  dedicated 2s connect / 5s TLS-handshake caps.
+  dedicated 2s connect / 5s TLS-handshake caps. DNS resolution,
+  socket connect, the H2 handshake, the stream and a single
+  idempotent retry all draw from the one budget: each phase gets
+  what is left when it starts.
 - **`maxBodyBytes` is enforced after the body arrives.** Mint delivers
   whole bodies, so an over-large body is still downloaded before it is
   refused, where gun aborted the transfer mid-stream.

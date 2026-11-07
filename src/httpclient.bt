@@ -352,13 +352,14 @@ Actor subclass: HTTPClient
   /// Plain-TCP connect with literal-first resolution. Answers `Result
   /// ok:` the `MintHTTP1` connection value, or `Result error:` the failure.
   class connectPlain: host port: port timeout: ms =>
+    start := self nowMs
     ip := self resolveHost: host timeout: ms
     ip isError ifTrue: [^ip]
     sock := MintTcpSocket
       connect: ip value
       port: port
       opts: #(#binary, {#packet, #raw}, {#active, false})
-      timeout: ms
+      timeout: (self remaining: ms from: start)
     sock isError ifTrue: [
       ^self transportError: "Could not open connection" reason: sock error
     ]
@@ -389,17 +390,18 @@ Actor subclass: HTTPClient
   /// `MintHTTP2` handshake, anything else (including no negotiation, a
   /// server without ALPN) wraps as `MintHTTP1`.
   class connectTls: host port: port timeout: ms =>
+    start := self nowMs
     started := MintHTTP1 bare: ((Erlang application) ensure_all_started: #ssl)
     started isError ifTrue: [
       ^self transportError: "Could not open connection" reason: started error
     ]
-    ip := self resolveHost: host timeout: ms
+    ip := self resolveHost: host timeout: (self remaining: ms from: start)
     ip isError ifTrue: [^ip]
     sock := MintTlsSocket
       connect: ip value
       port: port
       opts: (self tlsOptionsFor: host)
-      timeout: ms
+      timeout: (self remaining: ms from: start)
     sock isError ifTrue: [
       ^self transportError: "Could not open connection" reason: sock error
     ]
@@ -411,7 +413,7 @@ Actor subclass: HTTPClient
           connectH2: (sock value)
           host: host
           port: port
-          timeout: ms
+          timeout: (self remaining: ms from: start)
       ]
     // No negotiation (a server without ALPN) proceeds as HTTP/1.1, like
     // Mint's own check — but a protocol we never offered is a hard
@@ -831,6 +833,7 @@ Actor subclass: HTTPClient
   /// or PATCH could apply the body twice. Answers the Result, storing
   /// the live connection (or nil) for the next request.
   withConn: method url: url options: opts =>
+    start := HTTPClient nowMs
     live := HTTPClient liveConn: self.conn
     self.conn := live
     done := HTTPClient
@@ -848,10 +851,16 @@ Actor subclass: HTTPClient
       (done at: 1) isNil
     ]) and: [HTTPClient idempotent: method]
     retryable ifFalse: [^result]
+    // The retry draws from the same deadline: whatever the first
+    // attempt spent is gone, so a retried request stays bounded by
+    // the caller's `#timeout` instead of starting a fresh clock.
+    t := opts at: #timeout ifAbsent: [self.timeout]
     retry := HTTPClient
       transact: nil
       method: method
       url: url
-      options: opts
+      options: (opts merge: #{
+        #timeout => (HTTPClient remaining: t from: start)
+      })
     self.conn := retry at: 1
     retry at: 2
