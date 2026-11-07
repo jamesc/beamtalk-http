@@ -13,6 +13,12 @@ type ClientOptions = Dictionary(Symbol, Dynamic)
 
 /// HTTPClient — actor-based HTTP client for one-shot and persistent requests.
 ///
+/// Requests run over Mint (BT-4530): `http` URLs go through `MintHTTP1`,
+/// `https` URLs negotiate the protocol over TLS (`h2` served by
+/// `MintHTTP2`, anything else by `MintHTTP1`) with the same peer
+/// verification gun applied (system CA bundle, SNI, HTTPS hostname
+/// check).
+///
 /// ## One-shot convenience methods (class-side)
 ///
 /// ```beamtalk
@@ -27,6 +33,8 @@ type ClientOptions = Dictionary(Symbol, Dynamic)
 ///
 /// Spawn an actor with a base URL and optional headers/timeout. Instance
 /// methods accept relative paths and prepend the base URL automatically.
+/// The actor keeps its Mint connection across requests (reconnecting when
+/// the server closed it), so consecutive requests reuse one connection.
 ///
 /// ```beamtalk
 /// client := HTTPClient spawnWith: #{
@@ -50,6 +58,13 @@ Actor subclass: HTTPClient
   state: baseUrl :: String = ""
   state: headers :: List(List(String)) = #()
   state: timeout :: Integer = 30000
+  // Persistent Mint connection (a MintHTTP1 or MintHTTP2 value) reused
+  // across instance requests, or nil. Mint connections are values, so
+  // every request threads the stored one through and stores the updated
+  // copy; a dead connection reconnects on the next request. The socket
+  // is owned by this actor's process and closes on death, so no
+  // terminate: hook is needed to release it.
+  state: conn = nil
 
   // ===== Class-side one-shot convenience methods =====
 
@@ -61,7 +76,10 @@ Actor subclass: HTTPClient
   /// resp status   // => 200
   /// ```
   class get: url :: String -> Result(HTTPResponse, Exception) =>
-    Erlang beamtalk_http get: url
+    self
+      oneShot: #get
+      url: url
+      options: #{}
 
   /// Perform a one-shot GET request with headers (class method).
   ///
@@ -70,7 +88,10 @@ Actor subclass: HTTPClient
   /// resp := (HTTPClient get: "https://httpbin.org/get" headers: #(#("X-Custom", "value"))) unwrap
   /// ```
   class get: url :: String headers: headers :: List(List(String)) -> Result(HTTPResponse, Exception) =>
-    Erlang beamtalk_http get: url headers: headers
+    self
+      oneShot: #get
+      url: url
+      options: #{#headers => headers}
 
   /// Perform a one-shot POST request with body (class method).
   ///
@@ -80,14 +101,17 @@ Actor subclass: HTTPClient
   /// resp ok   // => true
   /// ```
   class post: url :: String body: body :: String -> Result(HTTPResponse, Exception) =>
-    (Erlang beamtalk_http) post: url body: body
+    self
+      oneShot: #post
+      url: url
+      options: #{#body => body}
 
   /// Perform a one-shot POST request with headers and body (class method).
   class post: url :: String headers: headers :: List(List(String)) body: body :: String -> Result(HTTPResponse, Exception) =>
-    (Erlang beamtalk_http)
-      post: url
-      headers: headers
-      body: body
+    self
+      oneShot: #post
+      url: url
+      options: #{#headers => headers, #body => body}
 
   /// Perform a one-shot PUT request with body (class method).
   ///
@@ -97,14 +121,17 @@ Actor subclass: HTTPClient
   /// resp ok   // => true
   /// ```
   class put: url :: String body: body :: String -> Result(HTTPResponse, Exception) =>
-    (Erlang beamtalk_http) put: url body: body
+    self
+      oneShot: #put
+      url: url
+      options: #{#body => body}
 
   /// Perform a one-shot PUT request with headers and body (class method).
   class put: url :: String headers: headers :: List(List(String)) body: body :: String -> Result(HTTPResponse, Exception) =>
-    (Erlang beamtalk_http)
-      put: url
-      headers: headers
-      body: body
+    self
+      oneShot: #put
+      url: url
+      options: #{#headers => headers, #body => body}
 
   /// Perform a one-shot DELETE request (class method).
   ///
@@ -114,11 +141,17 @@ Actor subclass: HTTPClient
   /// resp ok   // => true
   /// ```
   class delete: url :: String -> Result(HTTPResponse, Exception) =>
-    (Erlang beamtalk_http) delete: url
+    self
+      oneShot: #delete
+      url: url
+      options: #{}
 
   /// Perform a one-shot DELETE request with headers (class method).
   class delete: url :: String headers: headers :: List(List(String)) -> Result(HTTPResponse, Exception) =>
-    Erlang beamtalk_http delete: url headers: headers
+    self
+      oneShot: #delete
+      url: url
+      options: #{#headers => headers}
 
   /// Perform a one-shot generic request (class method).
   ///
@@ -131,7 +164,7 @@ Actor subclass: HTTPClient
   /// - `#headers` (List of [name, value] pairs, default `#()`) — request headers.
   /// - `#body` (String, default empty) — request body.
   /// - `#timeout` (Integer, default `30000`) — timeout in milliseconds.
-  /// - `#maxBodyBytes` (Integer | `#unlimited`, default `unlimited`) — cap on the response body in bytes: larger bodies answer `Result error:` without materialising in memory.
+  /// - `#maxBodyBytes` (Integer | `#unlimited`, default `unlimited`) — cap on the response body in bytes: larger bodies answer `Result error:` without being returned.
   ///
   /// ## Examples
   /// ```beamtalk
@@ -139,14 +172,532 @@ Actor subclass: HTTPClient
   ///   options: #{#body => "{}", #timeout => 5000}
   /// ```
   class request: method :: Symbol | String url: url :: String options: opts :: RequestOptions -> Result(HTTPResponse, Exception) =>
-    (Erlang beamtalk_http)
-      request: method
+    self
+      oneShot: method
       url: url
       options: opts
 
+  // ===== Connection core (class-side) =====
+
+  /// The default request timeout in milliseconds.
+  class defaultTimeout -> Integer => 30000
+
+  /// One request over a fresh connection: connect, transact, close the
+  /// connection, and answer the Result.
+  class oneShot: method url: url options: opts =>
+    done := self
+      transact: nil
+      method: method
+      url: url
+      options: opts
+    conn := done at: 1
+    conn isNil ifFalse: [conn close]
+    done at: 2
+
+  /// The full validated request cycle over `conn` (nil connects fresh).
+  /// Answers `{connOrNil, Result}`: the live connection threading the
+  /// request (for the caller to reuse or close), and `Result ok:` the
+  /// built response or `Result error:` the failure. A transport failure
+  /// closes the connection and answers nil for it — a failed stream
+  /// leaves a Mint connection wedged (its in-flight reference stays
+  /// set), so failed connections are never reused. Caller-side failures
+  /// (an invalid URL, an over-cap body) keep a still-healthy connection:
+  /// a bad URL sends nothing, and an over-cap body completed streaming
+  /// without transport trouble — either way there is nothing to recover
+  /// from, so no retry.
+  class transact: conn method: method url: url options: opts =>
+    self checkOptions: opts
+    upper := self normaliseMethod: method
+    checkedUrl := self checkUrl: url
+    headers := self checkHeaders: (opts at: #headers ifAbsent: [#()])
+    body := self checkBody: (opts at: #body ifAbsent: [""])
+    t := self checkTimeout: (opts at: #timeout ifAbsent: [self defaultTimeout])
+    cap := self checkMaxBodyBytes: (opts at: #maxBodyBytes ifAbsent: [
+      #unlimited
+    ])
+    start := self nowMs
+    parsed := self parseUrl: checkedUrl
+    parsed isError ifTrue: [^{conn, parsed}]
+    info := parsed value
+    live := conn
+    live isNil
+      ifTrue: [
+        made := self
+          connect: (info at: #scheme)
+          host: (info at: #host)
+          port: (info at: #port)
+          timeout: (self remaining: t from: start)
+        made isError ifTrue: [^{nil, made}]
+        live := made value
+      ]
+    lines := self headerLines: headers
+    sent := live
+      request: upper
+      target: (info at: #path)
+      headers: lines
+      body: body
+    sent isError
+      ifTrue: [
+        live close
+        ^{nil, self transportError: "Request failed" reason: sent error}
+      ]
+    pair := sent value
+    live2 := pair at: 1
+    ref := pair at: 2
+    got := live2 stream: ref timeout: (self remaining: t from: start)
+    got isError
+      ifTrue: [
+        live2 close
+        ^{nil, self transportError: "Request failed" reason: got error}
+      ]
+    pair2 := got value
+    conn2 := pair2 at: 1
+    built := self responseFrom: (pair2 at: 2) maxBodyBytes: cap
+    built isError ifTrue: [^{conn2, built}]
+    {conn2, built}
+
+  /// Milliseconds left of the `t` budget at `start` (the shared request
+  /// deadline: connect, request and stream all draw from it). Answers
+  /// zero once the budget is spent.
+  class remaining: t from: start =>
+    left := t - (self nowMs - start)
+    left < 0 ifTrue: [^0]
+    left
+
+  /// Build an `HTTPResponse` from Mint response parts, enforcing the
+  /// `maxBodyBytes` cap. Interim (`1xx`) responses are skipped by keeping
+  /// the last status/headers seen; `#data` bytes are concatenated from
+  /// every data part. The body answers a String when it is valid UTF-8,
+  /// else a Binary (the `beamtalk_http_text` policy).
+  class responseFrom: parts maxBodyBytes: cap =>
+    status := nil
+    pairs := #()
+    body := Binary fromBytes: #()
+    parts
+      do: [:part |
+        tag := part at: 1
+        known := ((tag =:= #status) or: [
+          tag =:= #headers
+        ]) or: [(tag =:= #data) or: [tag =:= #done]]
+        known ifFalse: [
+          ^self httpError: "Request failed (unknown response part)"
+        ]
+        tag =:= #status ifTrue: [status := part at: 3]
+        tag =:= #headers
+          ifTrue: [
+            headers := part at: 3
+            pairs := headers collect: [:h | #(h name, h value)]
+          ]
+        tag =:= #data ifTrue: [body := body concat: (part at: 3)]
+      ]
+    status isNil ifTrue: [
+      ^self httpError: "Request failed (no response status)"
+    ]
+    ((cap isKindOf: Integer) and: [
+      body size > cap
+    ]) ifTrue: [^self httpError: "Response body exceeded limit"]
+    tagged := (Erlang beamtalk_http_text) maybe_tag: body
+    Result ok: (HTTPResponse new: #{
+      #status => status,
+      #headers => pairs,
+      #body => tagged
+    })
+
+  // ===== Connect =====
+
+  /// Connect for `scheme` (`"http"` or `"https"`). Answers `Result ok:`
+  /// the Mint connection value, or `Result error:` the failure.
+  class connect: scheme host: host port: port timeout: ms =>
+    scheme =:= "https"
+      ifTrue: [
+        ^self
+          connectTls: host
+          port: port
+          timeout: ms
+      ]
+    self
+      connectPlain: host
+      port: port
+      timeout: ms
+
+  /// Resolve a host to a connect address tuple: IP literals (v4 and v6)
+  /// parse directly, DNS names try IPv4 then IPv6 (`MintHTTP1>>resolve:`
+  /// only tries IPv4, so IPv6 literals and v6-only names need this).
+  /// Both lookups draw from the `ms` budget (`inet:getaddr/3` — the
+  /// `/2` form waits forever, which would wedge a persistent client
+  /// past its `#timeout`). Answers `Result ok:` the tuple, or `Result
+  /// error:` the failure.
+  class resolveHost: host timeout: ms =>
+    literal := MintHTTP1 bare: ((Erlang inet) parse_address: (host asCharlist))
+    literal isOk ifTrue: [^literal]
+    start := self nowMs
+    v4 := MintHTTP1
+      bare: ((Erlang inet)
+        getaddr: (host asCharlist)
+        with: #inet
+        with: ms)
+    v4 isOk ifTrue: [^v4]
+    left := ms - (self nowMs - start)
+    left < 0 ifTrue: [left := 0]
+    v6 := MintHTTP1
+      bare: ((Erlang inet)
+        getaddr: (host asCharlist)
+        with: #inet6
+        with: left)
+    v6 isError ifTrue: [
+      ^self transportError: "Could not open connection" reason: v6 error
+    ]
+    v6
+
+  /// Plain-TCP connect with literal-first resolution. Answers `Result
+  /// ok:` the `MintHTTP1` connection value, or `Result error:` the failure.
+  class connectPlain: host port: port timeout: ms =>
+    start := self nowMs
+    ip := self resolveHost: host timeout: ms
+    ip isError ifTrue: [^ip]
+    sock := MintTcpSocket
+      connect: ip value
+      port: port
+      opts: #(#binary, {#packet, #raw}, {#active, false})
+      timeout: (self remaining: ms from: start)
+    sock isError ifTrue: [
+      ^self transportError: "Could not open connection" reason: sock error
+    ]
+    Result
+      ok: (MintHTTP1
+        socket: sock value
+        transport: #tcp
+        host: (self headerHost: host)
+        port: port
+        buffer: ""
+        timeout: ms
+        nextRef: 0
+        inFlightRef: nil
+        inFlightMethod: "")
+
+  /// The host as Mint should send it in the `host` header: IPv6 literals
+  /// bracketed (`[::1]`, RFC 3986 — `MintHTTP1>>hostHeader` does not
+  /// bracket, and the server rejects the bare form with a 400). The
+  /// connection itself still resolves the bare host.
+  class headerHost: host =>
+    (host includesSubstring: ":") ifTrue: [^"[" ++ host ++ "]"]
+    host
+
+  /// Connect over TLS with gun's verification (BT-4530): `verify_peer`
+  /// against the system CA bundle, SNI (omitted for IP literals), the
+  /// HTTPS hostname check, and ALPN offering both `h2` and `http/1.1`.
+  /// The negotiated protocol picks the connection: `h2` runs the
+  /// `MintHTTP2` handshake, anything else (including no negotiation, a
+  /// server without ALPN) wraps as `MintHTTP1`.
+  class connectTls: host port: port timeout: ms =>
+    start := self nowMs
+    started := MintHTTP1 bare: ((Erlang application) ensure_all_started: #ssl)
+    started isError ifTrue: [
+      ^self transportError: "Could not open connection" reason: started error
+    ]
+    ip := self resolveHost: host timeout: (self remaining: ms from: start)
+    ip isError ifTrue: [^ip]
+    sock := MintTlsSocket
+      connect: ip value
+      port: port
+      opts: (self tlsOptionsFor: host)
+      timeout: (self remaining: ms from: start)
+    sock isError ifTrue: [
+      ^self transportError: "Could not open connection" reason: sock error
+    ]
+    neg := MintHTTP1 bare: ((Erlang ssl) negotiated_protocol: (sock value) handle)
+    negotiated := neg isOk ifTrue: [neg value] ifFalse: [nil]
+    negotiated =:= (Binary fromIolist: "h2")
+      ifTrue: [
+        ^self
+          connectH2: (sock value)
+          host: host
+          port: port
+          timeout: (self remaining: ms from: start)
+      ]
+    // No negotiation (a server without ALPN) proceeds as HTTP/1.1, like
+    // Mint's own check — but a protocol we never offered is a hard
+    // error, never a misparse.
+    (negotiated isNil or: [negotiated =:= (Binary fromIolist: "http/1.1")])
+      ifFalse: [
+        (sock value) close
+        ^self transportError: "Could not open connection" reason: negotiated
+      ]
+    Result
+      ok: (MintHTTP1
+        socket: sock value
+        transport: #tls
+        host: (self headerHost: host)
+        port: port
+        buffer: ""
+        timeout: ms
+        nextRef: 0
+        inFlightRef: nil
+        inFlightMethod: "")
+
+  /// Wrap a negotiated-`h2` socket as a `MintHTTP2` value and run its
+  /// handshake (mirroring `MintHTTP2>>connectTls:` past its own socket
+  /// setup, which cannot take our CA options). Closes the socket and
+  /// answers `Result error:` when the handshake fails.
+  class connectH2: sock host: host port: port timeout: ms =>
+    opened := (MintHTTP2
+      socket: sock
+      transport: #tls
+      host: (self headerHost: host)
+      port: port
+      buffer: ""
+      timeout: ms
+      nextId: 1
+      streams: #{}
+      connSendWindow: MintH2Frame defaultWindow
+      connRecvWindow: MintH2Frame defaultWindow
+      peerMaxFrame: MintH2Frame defaultMaxFrame
+      peerInitWindow: MintH2Frame defaultWindow
+      peerMaxStreams: nil
+      encodeTable: (HPACK newTable: 4096)
+      decodeTable: (HPACK newTable: 4096)
+      goawayLastId: nil) open: ms
+    opened isError
+      ifTrue: [
+        sock close
+        ^self transportError: "Could not open connection" reason: opened error
+      ]
+    opened
+
+  /// The TLS options for an `https` host (BT-4530): `verify_peer` with
+  /// the system CA bundle, SNI as a charlist (`String>>asCharlist`,
+  /// BT-4324 — `ssl` rejects a Binary SNI, so `MintHTTP1>>sniOf`'s value
+  /// is only reused for its IP-literal test), the HTTPS hostname check,
+  /// and ALPN offering `h2` and `http/1.1` as raw Binaries.
+  class tlsOptionsFor: host :: String -> List(Object) =>
+    cacerts := (Erlang public_key) cacerts_get
+    matchfun := (Erlang public_key) pkix_verify_hostname_match_fun: #https
+    base :: List(Object) := #(#binary, {#packet, #raw}, {#active, false}, {#verify, #verify_peer}, {#cacerts, cacerts}, {#alpn_advertised_protocols, #((Binary fromIolist: "h2"), (Binary fromIolist: "http/1.1"))}, {#customize_hostname_check, #({#match_fun, matchfun})})
+    sni := MintHTTP1 sniOf: host
+    sni isNil ifTrue: [^base]
+    base ++ #({#server_name_indication, host asCharlist})
+
+  /// Answer the live connection or nil, closing a dead one best effort.
+  class liveConn: conn =>
+    conn isNil ifTrue: [^nil]
+    conn isOpen ifTrue: [^conn]
+    conn close
+    nil
+
+  // ===== Validation and parsing helpers =====
+
+  /// Raise a `type_error` for a bad client argument.
+  class typeError: sel hint: hint =>
+    Exception
+      signalKind: #type_error
+      class: #HTTPClient
+      selector: sel
+      hint: hint
+
+  /// Answer a failed Result holding an `Error` value with `hint` (the
+  /// value form of `Error signal:`, for transport failures that are
+  /// ordinary Results, not raises).
+  class httpError: hint :: String =>
+    captured := Result tryDo: [Error signal: hint]
+    Result error: captured error
+
+  /// Answer a failed Result for a transport failure, appending the
+  /// underlying reason to the hint as gun's errors did.
+  class transportError: hint :: String reason: reason =>
+    text := (reason isKindOf: String) ifTrue: [
+      reason
+    ] ifFalse: [reason printString]
+    self httpError: (hint ++ " (" ++ text ++ ")")
+
+  /// The request method as an uppercase String (`#get` or `"get"` to
+  /// `"GET"`). Anything else raises a `type_error`, as does a method
+  /// carrying CR or LF (it would split the request line like a
+  /// smuggled header).
+  class normaliseMethod: method =>
+    upper := (method isKindOf: Symbol)
+      ifTrue: [(method asString) uppercase]
+      ifFalse: [
+        (method isKindOf: String)
+          ifTrue: [method uppercase]
+          ifFalse: [
+            self typeError: #request:url:options: hint: "Method must be a Symbol or String"
+          ]
+      ]
+    (self hasCrlf: upper) ifTrue: [
+      self typeError: #request:url:options: hint: "Method must not contain CR or LF"
+    ]
+    upper
+
+  /// Check the options value is a Dictionary holding only known request
+  /// keys (`#headers`, `#body`, `#timeout`, `#maxBodyBytes`). Anything
+  /// else — including a misspelled key that would otherwise silently
+  /// fall back to its default — raises a `type_error`. Answers nil.
+  class checkOptions: opts =>
+    (opts isKindOf: Dictionary) ifFalse: [
+      self typeError: #request:url:options: hint: "Options must be a Dictionary"
+    ]
+    known := #(#headers, #body, #timeout, #maxBodyBytes)
+    bad := (opts keys) reject: [:key | known includes: key]
+    bad isEmpty
+      ifFalse: [
+        self typeError: #request:url:options: hint: ("Unknown request options; got: " ++ bad printString)
+      ]
+    nil
+
+  /// Check a URL (or base URL / path part) is a String. Answers it.
+  class checkUrl: url =>
+    (url isKindOf: String) ifFalse: [
+      self typeError: #request:url:options: hint: "Url must be a String"
+    ]
+    url
+
+  /// Check request headers are a List. Answers them.
+  class checkHeaders: headers =>
+    (headers isKindOf: List) ifFalse: [
+      self typeError: #request:url:options: hint: "Options.headers must be a List"
+    ]
+    headers
+
+  /// Check a request body is a String. Answers it.
+  class checkBody: body =>
+    (body isKindOf: String) ifFalse: [
+      self typeError: #request:url:options: hint: "Options.body must be a String"
+    ]
+    body
+
+  /// Check a timeout is a non-negative Integer of milliseconds. Answers it.
+  class checkTimeout: t =>
+    ((t isKindOf: Integer) and: [t >= 0])
+      ifFalse: [
+        self typeError: #request:url:options: hint: "Options.timeout must be a non-negative Integer"
+      ]
+    t
+
+  /// Check the `maxBodyBytes` cap is `#unlimited` or a non-negative
+  /// Integer. Answers it.
+  class checkMaxBodyBytes: cap =>
+    (cap =:= #unlimited) ifTrue: [^cap]
+    ((cap isKindOf: Integer) and: [cap >= 0])
+      ifFalse: [
+        self typeError: #request:url:options: hint: "Options.maxBodyBytes must be unlimited or a non-negative Integer"
+      ]
+    cap
+
+  /// Render header pairs as `"name: value"` lines for Mint. Each pair is
+  /// a two-element List (or Tuple) of Strings (or Binaries, rendered
+  /// unchecked as Mint does); anything else raises a `type_error`.
+  /// Names and values must not contain CR or LF bytes: Mint splices
+  /// lines verbatim, so a smuggled CRLF would split the request.
+  class headerLines: headers =>
+    headers
+      collect: [:pair |
+        shape := ((pair isKindOf: List) or: [
+          pair isKindOf: Tuple
+        ]) and: [pair size =:= 2]
+        shape
+          ifFalse: [
+            self typeError: #request:url:options: hint: ("Headers must be a List of [Name, Value] pairs; got: " ++ pair printString)
+          ]
+        name := pair at: 1
+        value := pair at: 2
+        ((name isKindOf: String) or: [name isKindOf: Binary])
+          ifFalse: [
+            self typeError: #request:url:options: hint: ("Headers must be a List of [Name, Value] pairs; got: " ++ pair printString)
+          ]
+        ((value isKindOf: String) or: [value isKindOf: Binary])
+          ifFalse: [
+            self typeError: #request:url:options: hint: ("Headers must be a List of [Name, Value] pairs; got: " ++ pair printString)
+          ]
+        (self hasCrlf: name)
+          ifTrue: [
+            self typeError: #request:url:options: hint: "Header names must not contain CR or LF"
+          ]
+        (self hasCrlf: value)
+          ifTrue: [
+            self typeError: #request:url:options: hint: "Header values must not contain CR or LF"
+          ]
+        (self headerText: name) ++ ": " ++ (self headerText: value)
+      ]
+
+  /// Whether text carries a CR or LF byte (13 or 10).
+  class hasCrlf: text =>
+    bytes := text toBytes
+    (bytes includes: 13) or: [bytes includes: 10]
+
+  /// A header name or value as text (mirroring `MintHTTP1>>headerText:`,
+  /// which is instance-side): Strings stay, Binaries decode unchecked,
+  /// anything else renders empty.
+  class headerText: value =>
+    (value isKindOf: String) ifTrue: [^value]
+    (value isKindOf: Binary) ifTrue: [^value asStringUnchecked]
+    ""
+
+  /// Parse a URL into connection parts. Answers `Result ok:` a
+  /// Dictionary with `#scheme` (String), `#host` (String), `#port`
+  /// (Integer, defaulting to 80/443) and `#path` (String, defaulting to
+  /// `"/"`, query preserved) — or `Result error:` for anything that is
+  /// not an `http(s)` URL with a host.
+  class parseUrl: url =>
+    (url isKindOf: String) ifFalse: [^self httpError: "Invalid URL"]
+    raw := (Erlang uri_string) parse: url
+    (raw isKindOf: Dictionary) ifFalse: [^self httpError: "Invalid URL"]
+    // Wire values arrive as Binaries (BT-4173); text parts become
+    // Strings here so scheme/host/path compare and concatenate below.
+    scheme := self textOf: (raw at: #scheme ifAbsent: [
+      ^self httpError: "Invalid URL"
+    ])
+    scheme isNil ifTrue: [^self httpError: "Invalid URL"]
+    ((scheme =:= "http") or: [
+      scheme =:= "https"
+    ]) ifFalse: [^self httpError: "Invalid URL"]
+    host := self textOf: (raw at: #host ifAbsent: [
+      ^self httpError: "Invalid URL"
+    ])
+    (host isNil or: [host isEmpty]) ifTrue: [^self httpError: "Invalid URL"]
+    port := raw at: #port ifAbsent: [
+      scheme =:= "https" ifTrue: [443] ifFalse: [80]
+    ]
+    path := self textOf: (raw at: #path ifAbsent: [""])
+    path isNil ifTrue: [^self httpError: "Invalid URL"]
+    path isEmpty ifTrue: [path := "/"]
+    query := raw at: #query ifAbsent: [nil]
+    query isNil
+      ifFalse: [
+        text := self textOf: query
+        text isNil ifTrue: [^self httpError: "Invalid URL"]
+        path := path ++ "?" ++ text
+      ]
+    Result ok: #{#scheme => scheme, #host => host, #port => port, #path => path}
+
+  /// Wire bytes as text: a String stays itself, a Binary decodes when it
+  /// is valid UTF-8, anything else answers nil (the caller reports an
+  /// invalid URL rather than corrupting the request). Mirrors
+  /// `MintHTTP1>>stringOrOpaque`'s three shapes (bare String, Result,
+  /// other) so an `asString` return-shape change breaks loudly here
+  /// instead of misreading every URL.
+  class textOf: bin =>
+    (bin isKindOf: String) ifTrue: [^bin]
+    (bin isKindOf: Binary) ifFalse: [^nil]
+    bin asString match: [
+      s :: String -> s;
+      r :: Result -> r isOk ifTrue: [r value] ifFalse: [nil];
+      _ -> nil
+    ]
+
+  /// Milliseconds on the monotonic clock, for request deadlines.
+  class nowMs -> Integer => (Erlang erlang) monotonic_time: #millisecond
+
+  /// Whether an HTTP method is safe to retry (RFC 9110 idempotent
+  /// methods). Answers false for anything else, including unparsable
+  /// methods (which fail validation before any retry decision).
+  class idempotent: method =>
+    upper := self normaliseMethod: method
+    #("GET", "HEAD", "OPTIONS", "TRACE", "DELETE", "PUT") includes: upper
+
   // ===== Instance methods (persistent-client style) =====
   //
-  // Actor state: baseUrl (String), headers (List), timeout (Integer)
+  // Actor state: baseUrl (String), headers (List), timeout (Integer),
+  // conn (Mint connection value or nil).
   // Initialised via spawnWith: #{#baseUrl => "...", #headers => #(), #timeout => 30000}
 
   /// Perform a GET request using the stored base URL and default options.
@@ -158,18 +709,18 @@ Actor subclass: HTTPClient
   /// resp ok   // => true
   /// ```
   get: path :: String -> Result(HTTPResponse, Exception) =>
-    url := self.baseUrl ++ path
-    (Erlang beamtalk_http)
-      request: #get
+    url := (HTTPClient checkUrl: self.baseUrl) ++ (HTTPClient checkUrl: path)
+    self
+      withConn: #get
       url: url
       options: #{#headers => self.headers, #timeout => self.timeout}
 
   /// Perform a GET request with explicit headers, replacing the actor
   /// defaults for this request (as `#headers` in `request:path:options:`).
   get: path :: String headers: headers :: List(List(String)) -> Result(HTTPResponse, Exception) =>
-    url := self.baseUrl ++ path
-    (Erlang beamtalk_http)
-      request: #get
+    url := (HTTPClient checkUrl: self.baseUrl) ++ (HTTPClient checkUrl: path)
+    self
+      withConn: #get
       url: url
       options: #{#headers => headers, #timeout => self.timeout}
 
@@ -181,22 +732,24 @@ Actor subclass: HTTPClient
   /// resp ok   // => true
   /// ```
   post: path :: String body: body :: String -> Result(HTTPResponse, Exception) =>
-    url := self.baseUrl ++ path
-    opts := #{#headers => self.headers, #timeout => self.timeout, #body => body}
-    (Erlang beamtalk_http)
-      request: #post
+    url := (HTTPClient checkUrl: self.baseUrl) ++ (HTTPClient checkUrl: path)
+    self
+      withConn: #post
       url: url
-      options: opts
+      options: #{
+        #headers => self.headers,
+        #timeout => self.timeout,
+        #body => body
+      }
 
   /// Perform a POST request with explicit headers (replacing the actor
   /// defaults) and body.
   post: path :: String headers: headers :: List(List(String)) body: body :: String -> Result(HTTPResponse, Exception) =>
-    url := self.baseUrl ++ path
-    opts := #{#headers => headers, #timeout => self.timeout, #body => body}
-    (Erlang beamtalk_http)
-      request: #post
+    url := (HTTPClient checkUrl: self.baseUrl) ++ (HTTPClient checkUrl: path)
+    self
+      withConn: #post
       url: url
-      options: opts
+      options: #{#headers => headers, #timeout => self.timeout, #body => body}
 
   /// Perform a PUT request using the stored base URL and default options.
   ///
@@ -206,22 +759,24 @@ Actor subclass: HTTPClient
   /// resp ok   // => true
   /// ```
   put: path :: String body: body :: String -> Result(HTTPResponse, Exception) =>
-    url := self.baseUrl ++ path
-    opts := #{#headers => self.headers, #timeout => self.timeout, #body => body}
-    (Erlang beamtalk_http)
-      request: #put
+    url := (HTTPClient checkUrl: self.baseUrl) ++ (HTTPClient checkUrl: path)
+    self
+      withConn: #put
       url: url
-      options: opts
+      options: #{
+        #headers => self.headers,
+        #timeout => self.timeout,
+        #body => body
+      }
 
   /// Perform a PUT request with explicit headers (replacing the actor
   /// defaults) and body.
   put: path :: String headers: headers :: List(List(String)) body: body :: String -> Result(HTTPResponse, Exception) =>
-    url := self.baseUrl ++ path
-    opts := #{#headers => headers, #timeout => self.timeout, #body => body}
-    (Erlang beamtalk_http)
-      request: #put
+    url := (HTTPClient checkUrl: self.baseUrl) ++ (HTTPClient checkUrl: path)
+    self
+      withConn: #put
       url: url
-      options: opts
+      options: #{#headers => headers, #timeout => self.timeout, #body => body}
 
   /// Perform a DELETE request using the stored base URL and default options.
   ///
@@ -231,18 +786,18 @@ Actor subclass: HTTPClient
   /// resp ok   // => true
   /// ```
   delete: path :: String -> Result(HTTPResponse, Exception) =>
-    url := self.baseUrl ++ path
-    (Erlang beamtalk_http)
-      request: #delete
+    url := (HTTPClient checkUrl: self.baseUrl) ++ (HTTPClient checkUrl: path)
+    self
+      withConn: #delete
       url: url
       options: #{#headers => self.headers, #timeout => self.timeout}
 
   /// Perform a DELETE request with explicit headers, replacing the actor
   /// defaults for this request.
   delete: path :: String headers: headers :: List(List(String)) -> Result(HTTPResponse, Exception) =>
-    url := self.baseUrl ++ path
-    (Erlang beamtalk_http)
-      request: #delete
+    url := (HTTPClient checkUrl: self.baseUrl) ++ (HTTPClient checkUrl: path)
+    self
+      withConn: #delete
       url: url
       options: #{#headers => headers, #timeout => self.timeout}
 
@@ -263,9 +818,49 @@ Actor subclass: HTTPClient
   /// resp ok   // => true
   /// ```
   request: method :: Symbol | String path: path :: String options: opts :: RequestOptions -> Result(HTTPResponse, Exception) =>
-    url := self.baseUrl ++ path
+    url := (HTTPClient checkUrl: self.baseUrl) ++ (HTTPClient checkUrl: path)
+    HTTPClient checkOptions: opts
     defaults := #{#headers => self.headers, #timeout => self.timeout}
-    (Erlang beamtalk_http)
-      request: method
+    self
+      withConn: method
       url: url
       options: (defaults merge: opts)
+
+  /// Run one request over the persistent connection, reconnecting when the
+  /// stored connection died. A reused connection that drops mid-request
+  /// (a server-close raced the request) retries once over a fresh
+  /// connection — but only for idempotent methods: resubmitting a POST
+  /// or PATCH could apply the body twice. Answers the Result, storing
+  /// the live connection (or nil) for the next request.
+  withConn: method url: url options: opts =>
+    start := HTTPClient nowMs
+    live := HTTPClient liveConn: self.conn
+    self.conn := live
+    done := HTTPClient
+      transact: live
+      method: method
+      url: url
+      options: opts
+    self.conn := done at: 1
+    result := done at: 2
+    result isOk ifTrue: [^result]
+    // Retry only a genuinely reused connection that died on the wire:
+    // transact answers nil for the connection on transport failures,
+    // and keeps it on caller-side failures (bad URL, over-cap body).
+    retryable := (live isNil not and: [
+      (done at: 1) isNil
+    ]) and: [HTTPClient idempotent: method]
+    retryable ifFalse: [^result]
+    // The retry draws from the same deadline: whatever the first
+    // attempt spent is gone, so a retried request stays bounded by
+    // the caller's `#timeout` instead of starting a fresh clock.
+    t := opts at: #timeout ifAbsent: [self.timeout]
+    retry := HTTPClient
+      transact: nil
+      method: method
+      url: url
+      options: (opts merge: #{
+        #timeout => (HTTPClient remaining: t from: start)
+      })
+    self.conn := retry at: 1
+    retry at: 2

@@ -1,0 +1,45 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+// BT-4530: smoke bench for the Mint client. Twenty sequential requests in
+// each style must all succeed inside a generous ceiling: this catches
+// hangs, connection leaks and throughput cliffs in CI without flaking on
+// loaded machines. Absolute numbers (not gun-vs-mint deltas — gun is
+// gone) establish the Mint baseline; see the BT-4530 report for the
+// measured localhost figures.
+TestCase subclass: HTTPClientBenchTest
+  field: baseUrl = ""
+  field: server = nil
+
+  // Start the local test server and record the base URL.
+  setUp =>
+    self.server := HTTPTestServer start
+    self.baseUrl := "http://localhost:" ++ self.server port asString
+    self
+
+  // Stop the local test server after each test.
+  tearDown => self.server isNil ifFalse: [self.server stop]
+
+  testOneShotThroughput =>
+    start := HTTPClient nowMs
+    1
+      to: 20
+      do: [:i |
+        resp := (HTTPClient get: self.baseUrl ++ "/get") unwrap
+        self assert: resp status equals: 200
+      ]
+    elapsed := HTTPClient nowMs - start
+    self assert: (elapsed < 60000)
+
+  testPersistentReuseThroughput =>
+    client := HTTPClient spawnWith: #{#baseUrl => self.baseUrl}
+    start := HTTPClient nowMs
+    1
+      to: 20
+      do: [:i |
+        resp := (client get: "/get") unwrap
+        self assert: resp status equals: 200
+      ]
+    elapsed := HTTPClient nowMs - start
+    self assert: client stop equals: #ok
+    self assert: (elapsed < 60000)

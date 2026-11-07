@@ -1,5 +1,47 @@
 # Changelog
 
+## Unreleased
+
+### HTTPClient runs on Mint; gun is removed
+
+`HTTPClient` now performs requests through
+[Mint](https://github.com/jamesc/beamtalk-mint), a pure-Beamtalk
+HTTP/1.1 and HTTP/2 client, instead of gun. `native/beamtalk_http.erl`
+(and its `beamtalk_http_tests` / `beamtalk_http_response` companions)
+is deleted, gun and cowlib leave `beamtalk.toml`/`beamtalk.lock`, and
+the client helpers live in `src/httpclient.bt` with BUnit coverage in
+`test/httpclient_utils_test.bt`. The public API is unchanged: the same
+one-shot verbs, `request:url:options:` (`#headers`/`#body`/`#timeout`/
+`#maxBodyBytes`) and the persistent `spawnWith:` style, with the same
+`Result` / `type_error` outcomes.
+
+Behaviour notes:
+
+- **`https` negotiates H1 and H2.** Plain `http` uses `MintHTTP1`;
+  `https` offers both `h2` and `http/1.1` over ALPN with gun's
+  verification (`verify_peer` against the system CA bundle, SNI,
+  HTTPS hostname check) and runs the negotiated protocol.
+- **Persistent clients reuse one connection.** Instance requests share
+  the actor's Mint connection across calls (reconnecting when the
+  server closed it); one-shot class methods still connect per request.
+- **Timeouts.** The `#timeout` option still bounds a request, but the
+  connect phase now shares the request timeout instead of gun's
+  dedicated 2s connect / 5s TLS-handshake caps. DNS resolution,
+  socket connect, the H2 handshake, the stream and a single
+  idempotent retry all draw from the one budget: each phase gets
+  what is left when it starts.
+- **`maxBodyBytes` is enforced after the body arrives.** Mint delivers
+  whole bodies, so an over-large body is still downloaded before it is
+  refused, where gun aborted the transfer mid-stream.
+- **Request options are strict.** Keys beyond `#headers`, `#body`,
+  `#timeout` and `#maxBodyBytes` raise a `type_error` (gun silently
+  ignored them), and header names/values containing CR or LF raise
+  instead of being spliced raw into the request.
+- **Persistent retry is idempotent-only.** A reused connection that
+  drops mid-request retries once over a fresh connection for idempotent
+  methods (GET, HEAD, OPTIONS, TRACE, DELETE, PUT); POST and PATCH
+  return the failure instead of risking a double submit.
+
 ## 0.3.0 (unreleased)
 
 ### Breaking: the server runs on Buccaneer only; cowboy is removed
