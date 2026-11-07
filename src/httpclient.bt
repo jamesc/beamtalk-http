@@ -201,8 +201,10 @@ Actor subclass: HTTPClient
   /// closes the connection and answers nil for it — a failed stream
   /// leaves a Mint connection wedged (its in-flight reference stays
   /// set), so failed connections are never reused. Caller-side failures
-  /// (an invalid URL, an over-cap body) keep the connection: nothing
-  /// was sent, so there is nothing to recover from.
+  /// (an invalid URL, an over-cap body) keep a still-healthy connection:
+  /// a bad URL sends nothing, and an over-cap body completed streaming
+  /// without transport trouble — either way there is nothing to recover
+  /// from, so no retry.
   class transact: conn method: method url: url options: opts =>
     self checkOptions: opts
     upper := self normaliseMethod: method
@@ -213,6 +215,7 @@ Actor subclass: HTTPClient
     cap := self checkMaxBodyBytes: (opts at: #maxBodyBytes ifAbsent: [
       #unlimited
     ])
+    start := self nowMs
     parsed := self parseUrl: checkedUrl
     parsed isError ifTrue: [^{conn, parsed}]
     info := parsed value
@@ -223,12 +226,11 @@ Actor subclass: HTTPClient
           connect: (info at: #scheme)
           host: (info at: #host)
           port: (info at: #port)
-          timeout: t
+          timeout: (self remaining: t from: start)
         made isError ifTrue: [^{nil, made}]
         live := made value
       ]
     lines := self headerLines: headers
-    start := self nowMs
     sent := live
       request: upper
       target: (info at: #path)
@@ -242,9 +244,7 @@ Actor subclass: HTTPClient
     pair := sent value
     live2 := pair at: 1
     ref := pair at: 2
-    remaining := t - (self nowMs - start)
-    remaining < 0 ifTrue: [remaining := 0]
-    got := live2 stream: ref timeout: remaining
+    got := live2 stream: ref timeout: (self remaining: t from: start)
     got isError
       ifTrue: [
         live2 close
@@ -255,6 +255,14 @@ Actor subclass: HTTPClient
     built := self responseFrom: (pair2 at: 2) maxBodyBytes: cap
     built isError ifTrue: [^{conn2, built}]
     {conn2, built}
+
+  /// Milliseconds left of the `t` budget at `start` (the shared request
+  /// deadline: connect, request and stream all draw from it). Answers
+  /// zero once the budget is spent.
+  class remaining: t from: start =>
+    left := t - (self nowMs - start)
+    left < 0 ifTrue: [^0]
+    left
 
   /// Build an `HTTPResponse` from Mint response parts, enforcing the
   /// `maxBodyBytes` cap. Interim (`1xx`) responses are skipped by keeping
@@ -315,13 +323,27 @@ Actor subclass: HTTPClient
   /// Resolve a host to a connect address tuple: IP literals (v4 and v6)
   /// parse directly, DNS names try IPv4 then IPv6 (`MintHTTP1>>resolve:`
   /// only tries IPv4, so IPv6 literals and v6-only names need this).
-  /// Answers `Result ok:` the tuple, or `Result error:` the failure.
-  class resolveHost: host =>
+  /// Both lookups draw from the `ms` budget (`inet:getaddr/3` — the
+  /// `/2` form waits forever, which would wedge a persistent client
+  /// past its `#timeout`). Answers `Result ok:` the tuple, or `Result
+  /// error:` the failure.
+  class resolveHost: host timeout: ms =>
     literal := MintHTTP1 bare: ((Erlang inet) parse_address: (host asCharlist))
     literal isOk ifTrue: [^literal]
-    v4 := MintHTTP1 bare: ((Erlang inet) getaddr: (host asCharlist) with: #inet)
+    start := self nowMs
+    v4 := MintHTTP1
+      bare: ((Erlang inet)
+        getaddr: (host asCharlist)
+        with: #inet
+        with: ms)
     v4 isOk ifTrue: [^v4]
-    v6 := MintHTTP1 bare: ((Erlang inet) getaddr: (host asCharlist) with: #inet6)
+    left := ms - (self nowMs - start)
+    left < 0 ifTrue: [left := 0]
+    v6 := MintHTTP1
+      bare: ((Erlang inet)
+        getaddr: (host asCharlist)
+        with: #inet6
+        with: left)
     v6 isError ifTrue: [
       ^self transportError: "Could not open connection" reason: v6 error
     ]
@@ -330,7 +352,7 @@ Actor subclass: HTTPClient
   /// Plain-TCP connect with literal-first resolution. Answers `Result
   /// ok:` the `MintHTTP1` connection value, or `Result error:` the failure.
   class connectPlain: host port: port timeout: ms =>
-    ip := self resolveHost: host
+    ip := self resolveHost: host timeout: ms
     ip isError ifTrue: [^ip]
     sock := MintTcpSocket
       connect: ip value
@@ -371,7 +393,7 @@ Actor subclass: HTTPClient
     started isError ifTrue: [
       ^self transportError: "Could not open connection" reason: started error
     ]
-    ip := self resolveHost: host
+    ip := self resolveHost: host timeout: ms
     ip isError ifTrue: [^ip]
     sock := MintTlsSocket
       connect: ip value
@@ -486,11 +508,23 @@ Actor subclass: HTTPClient
     self httpError: (hint ++ " (" ++ text ++ ")")
 
   /// The request method as an uppercase String (`#get` or `"get"` to
-  /// `"GET"`). Anything else raises a `type_error`.
+  /// `"GET"`). Anything else raises a `type_error`, as does a method
+  /// carrying CR or LF (it would split the request line like a
+  /// smuggled header).
   class normaliseMethod: method =>
-    (method isKindOf: Symbol) ifTrue: [^(method asString) uppercase]
-    (method isKindOf: String) ifTrue: [^method uppercase]
-    self typeError: #request:url:options: hint: "Method must be a Symbol or String"
+    upper := (method isKindOf: Symbol)
+      ifTrue: [(method asString) uppercase]
+      ifFalse: [
+        (method isKindOf: String)
+          ifTrue: [method uppercase]
+          ifFalse: [
+            self typeError: #request:url:options: hint: "Method must be a Symbol or String"
+          ]
+      ]
+    (self hasCrlf: upper) ifTrue: [
+      self typeError: #request:url:options: hint: "Method must not contain CR or LF"
+    ]
+    upper
 
   /// Check the options value is a Dictionary holding only known request
   /// keys (`#headers`, `#body`, `#timeout`, `#maxBodyBytes`). Anything

@@ -232,18 +232,24 @@ TestCase subclass: HTTPClientUtilsTest
 
   // ===== resolveHost: / headerHost: =====
   testResolveIpv4Literal =>
-    self assert: (HTTPClient resolveHost: "127.0.0.1") value equals: {127, 0, 0, 1}
+    self assert: (HTTPClient resolveHost: "127.0.0.1" timeout: 5000) value equals: {127, 0, 0, 1}
 
   testResolveIpv6Literal =>
-    self assert: (HTTPClient resolveHost: "::1") value equals: {0, 0, 0, 0, 0, 0, 0, 1}
+    self assert: (HTTPClient resolveHost: "::1" timeout: 5000) value equals: {0, 0, 0, 0, 0, 0, 0, 1}
 
   testResolveLocalhost =>
     // Loopback resolves without touching the network.
-    self assert: (HTTPClient resolveHost: "localhost") isOk
+    self assert: (HTTPClient resolveHost: "localhost" timeout: 5000) isOk
 
   testResolveUnknownHostIsError =>
-    result := HTTPClient resolveHost: "nonexistent.invalid"
+    result := HTTPClient resolveHost: "nonexistent.invalid" timeout: 5000
     self deny: result isOk
+
+  testNormaliseMethodRejectsCrlf =>
+    crlf := self assertOk: (Binary fromBytes: #(13, 10)) asString
+    self should: [
+      HTTPClient normaliseMethod: "GET" ++ crlf ++ "X-Evil: 1"
+    ] raise: #type_error
 
   testHeaderHostBracketsIpv6 =>
     self assert: (HTTPClient headerHost: "::1") equals: "[::1]"
