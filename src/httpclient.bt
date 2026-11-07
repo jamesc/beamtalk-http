@@ -61,7 +61,9 @@ Actor subclass: HTTPClient
   // Persistent Mint connection (a MintHTTP1 or MintHTTP2 value) reused
   // across instance requests, or nil. Mint connections are values, so
   // every request threads the stored one through and stores the updated
-  // copy; a dead connection reconnects on the next request.
+  // copy; a dead connection reconnects on the next request. The socket
+  // is owned by this actor's process and closes on death, so no
+  // terminate: hook is needed to release it.
   state: conn = nil
 
   // ===== Class-side one-shot convenience methods =====
@@ -195,10 +197,12 @@ Actor subclass: HTTPClient
   /// The full validated request cycle over `conn` (nil connects fresh).
   /// Answers `{connOrNil, Result}`: the live connection threading the
   /// request (for the caller to reuse or close), and `Result ok:` the
-  /// Mint response parts or `Result error:` the failure. Any failure
+  /// built response or `Result error:` the failure. A transport failure
   /// closes the connection and answers nil for it — a failed stream
   /// leaves a Mint connection wedged (its in-flight reference stays
-  /// set), so failed connections are never reused.
+  /// set), so failed connections are never reused. Caller-side failures
+  /// (an invalid URL, an over-cap body) keep the connection: nothing
+  /// was sent, so there is nothing to recover from.
   class transact: conn method: method url: url options: opts =>
     self checkOptions: opts
     upper := self normaliseMethod: method
@@ -210,7 +214,7 @@ Actor subclass: HTTPClient
       #unlimited
     ])
     parsed := self parseUrl: checkedUrl
-    parsed isError ifTrue: [^{nil, parsed}]
+    parsed isError ifTrue: [^{conn, parsed}]
     info := parsed value
     live := conn
     live isNil
@@ -249,11 +253,7 @@ Actor subclass: HTTPClient
     pair2 := got value
     conn2 := pair2 at: 1
     built := self responseFrom: (pair2 at: 2) maxBodyBytes: cap
-    built isError
-      ifTrue: [
-        conn2 close
-        ^{nil, built}
-      ]
+    built isError ifTrue: [^{conn2, built}]
     {conn2, built}
 
   /// Build an `HTTPResponse` from Mint response parts, enforcing the
@@ -268,6 +268,12 @@ Actor subclass: HTTPClient
     parts
       do: [:part |
         tag := part at: 1
+        known := ((tag =:= #status) or: [
+          tag =:= #headers
+        ]) or: [(tag =:= #data) or: [tag =:= #done]]
+        known ifFalse: [
+          ^self httpError: "Request failed (unknown response part)"
+        ]
         tag =:= #status ifTrue: [status := part at: 3]
         tag =:= #headers
           ifTrue: [
@@ -376,13 +382,22 @@ Actor subclass: HTTPClient
       ^self transportError: "Could not open connection" reason: sock error
     ]
     neg := MintHTTP1 bare: ((Erlang ssl) negotiated_protocol: (sock value) handle)
-    (neg isOk and: [neg value =:= (Binary fromIolist: "h2")])
+    negotiated := neg isOk ifTrue: [neg value] ifFalse: [nil]
+    negotiated =:= (Binary fromIolist: "h2")
       ifTrue: [
         ^self
           connectH2: (sock value)
           host: host
           port: port
           timeout: ms
+      ]
+    // No negotiation (a server without ALPN) proceeds as HTTP/1.1, like
+    // Mint's own check — but a protocol we never offered is a hard
+    // error, never a misparse.
+    (negotiated isNil or: [negotiated =:= (Binary fromIolist: "http/1.1")])
+      ifFalse: [
+        (sock value) close
+        ^self transportError: "Could not open connection" reason: negotiated
       ]
     Result
       ok: (MintHTTP1
@@ -477,11 +492,20 @@ Actor subclass: HTTPClient
     (method isKindOf: String) ifTrue: [^method uppercase]
     self typeError: #request:url:options: hint: "Method must be a Symbol or String"
 
-  /// Check the options value is a Dictionary. Answers nil.
+  /// Check the options value is a Dictionary holding only known request
+  /// keys (`#headers`, `#body`, `#timeout`, `#maxBodyBytes`). Anything
+  /// else — including a misspelled key that would otherwise silently
+  /// fall back to its default — raises a `type_error`. Answers nil.
   class checkOptions: opts =>
     (opts isKindOf: Dictionary) ifFalse: [
       self typeError: #request:url:options: hint: "Options must be a Dictionary"
     ]
+    known := #(#headers, #body, #timeout, #maxBodyBytes)
+    bad := (opts keys) reject: [:key | known includes: key]
+    bad isEmpty
+      ifFalse: [
+        self typeError: #request:url:options: hint: ("Unknown request options; got: " ++ bad printString)
+      ]
     nil
 
   /// Check a URL (or base URL / path part) is a String. Answers it.
@@ -526,6 +550,8 @@ Actor subclass: HTTPClient
   /// Render header pairs as `"name: value"` lines for Mint. Each pair is
   /// a two-element List (or Tuple) of Strings (or Binaries, rendered
   /// unchecked as Mint does); anything else raises a `type_error`.
+  /// Names and values must not contain CR or LF bytes: Mint splices
+  /// lines verbatim, so a smuggled CRLF would split the request.
   class headerLines: headers =>
     headers
       collect: [:pair |
@@ -546,8 +572,21 @@ Actor subclass: HTTPClient
           ifFalse: [
             self typeError: #request:url:options: hint: ("Headers must be a List of [Name, Value] pairs; got: " ++ pair printString)
           ]
+        (self hasCrlf: name)
+          ifTrue: [
+            self typeError: #request:url:options: hint: "Header names must not contain CR or LF"
+          ]
+        (self hasCrlf: value)
+          ifTrue: [
+            self typeError: #request:url:options: hint: "Header values must not contain CR or LF"
+          ]
         (self headerText: name) ++ ": " ++ (self headerText: value)
       ]
+
+  /// Whether text carries a CR or LF byte (13 or 10).
+  class hasCrlf: text =>
+    bytes := text toBytes
+    (bytes includes: 13) or: [bytes includes: 10]
 
   /// A header name or value as text (mirroring `MintHTTP1>>headerText:`,
   /// which is instance-side): Strings stay, Binaries decode unchecked,
@@ -596,16 +635,28 @@ Actor subclass: HTTPClient
 
   /// Wire bytes as text: a String stays itself, a Binary decodes when it
   /// is valid UTF-8, anything else answers nil (the caller reports an
-  /// invalid URL rather than corrupting the request).
+  /// invalid URL rather than corrupting the request). Mirrors
+  /// `MintHTTP1>>stringOrOpaque`'s three shapes (bare String, Result,
+  /// other) so an `asString` return-shape change breaks loudly here
+  /// instead of misreading every URL.
   class textOf: bin =>
     (bin isKindOf: String) ifTrue: [^bin]
     (bin isKindOf: Binary) ifFalse: [^nil]
-    converted := bin asString
-    converted isOk ifTrue: [^converted value]
-    nil
+    bin asString match: [
+      s :: String -> s;
+      r :: Result -> r isOk ifTrue: [r value] ifFalse: [nil];
+      _ -> nil
+    ]
 
   /// Milliseconds on the monotonic clock, for request deadlines.
   class nowMs -> Integer => (Erlang erlang) monotonic_time: #millisecond
+
+  /// Whether an HTTP method is safe to retry (RFC 9110 idempotent
+  /// methods). Answers false for anything else, including unparsable
+  /// methods (which fail validation before any retry decision).
+  class idempotent: method =>
+    upper := self normaliseMethod: method
+    #("GET", "HEAD", "OPTIONS", "TRACE", "DELETE", "PUT") includes: upper
 
   // ===== Instance methods (persistent-client style) =====
   //
@@ -740,9 +791,11 @@ Actor subclass: HTTPClient
       options: (defaults merge: opts)
 
   /// Run one request over the persistent connection, reconnecting when the
-  /// stored connection died and retrying once on a reused connection that
-  /// fails (a server-close raced the request). Answers the Result,
-  /// storing the live connection (or nil) for the next request.
+  /// stored connection died. A reused connection that drops mid-request
+  /// (a server-close raced the request) retries once over a fresh
+  /// connection — but only for idempotent methods: resubmitting a POST
+  /// or PATCH could apply the body twice. Answers the Result, storing
+  /// the live connection (or nil) for the next request.
   withConn: method url: url options: opts =>
     live := HTTPClient liveConn: self.conn
     self.conn := live
@@ -753,7 +806,14 @@ Actor subclass: HTTPClient
       options: opts
     self.conn := done at: 1
     result := done at: 2
-    (result isOk or: [live isNil]) ifTrue: [^result]
+    result isOk ifTrue: [^result]
+    // Retry only a genuinely reused connection that died on the wire:
+    // transact answers nil for the connection on transport failures,
+    // and keeps it on caller-side failures (bad URL, over-cap body).
+    retryable := (live isNil not and: [
+      (done at: 1) isNil
+    ]) and: [HTTPClient idempotent: method]
+    retryable ifFalse: [^result]
     retry := HTTPClient
       transact: nil
       method: method

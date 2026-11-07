@@ -30,6 +30,14 @@ Behaviour notes:
 - **`maxBodyBytes` is enforced after the body arrives.** Mint delivers
   whole bodies, so an over-large body is still downloaded before it is
   refused, where gun aborted the transfer mid-stream.
+- **Request options are strict.** Keys beyond `#headers`, `#body`,
+  `#timeout` and `#maxBodyBytes` raise a `type_error` (gun silently
+  ignored them), and header names/values containing CR or LF raise
+  instead of being spliced raw into the request.
+- **Persistent retry is idempotent-only.** A reused connection that
+  drops mid-request retries once over a fresh connection for idempotent
+  methods (GET, HEAD, OPTIONS, TRACE, DELETE, PUT); POST and PATCH
+  return the failure instead of risking a double submit.
 
 ## 0.3.0 (unreleased)
 

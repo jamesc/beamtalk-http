@@ -403,6 +403,22 @@ TestCase subclass: HTTPTest
       options: #{#timeout => 2000}
     self deny: result isOk
 
+  testRequestTimeoutReturnsHttpError =>
+    slow := HTTPServer
+      start: 0
+      handler: [:req |
+        (Erlang timer) sleep: 3000
+        HTTPResponse new: #{#status => 200, #body => "slow"}
+      ]
+      options: #{}
+    url := "http://localhost:" ++ slow port asString ++ "/slow"
+    result := HTTPClient
+      request: #get
+      url: url
+      options: #{#timeout => 200}
+    self deny: result isOk
+    self assert: slow stop equals: #ok
+
   testInvalidUrlSchemeReturnsHttpError =>
     result := HTTPClient get: "not-a-url"
     self deny: result isOk
@@ -432,3 +448,6 @@ TestCase subclass: HTTPTest
       ]
     resp := (HTTPClient get: "https://httpbin.org/get") unwrap
     self assert: resp ok
+    // A wrong-host certificate must fail verification (never silently OK).
+    wrong := HTTPClient get: "https://wrong.host.badssl.com/"
+    self deny: wrong isOk

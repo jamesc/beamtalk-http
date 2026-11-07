@@ -63,6 +63,23 @@ TestCase subclass: HTTPClientUtilsTest
     result := HTTPClient parseUrl: 42
     self deny: result isOk
 
+  testParseUppercaseSchemeIsError =>
+    result := HTTPClient parseUrl: "HTTP://example.com/a"
+    self deny: result isOk
+
+  testParseUserinfoIgnored =>
+    info := self assertOk: (HTTPClient parseUrl: "http://user:pass@example.com/a")
+    self assert: (info at: #host) equals: "example.com"
+    self assert: (info at: #path) equals: "/a"
+
+  testParseFragmentDropped =>
+    info := self assertOk: (HTTPClient parseUrl: "http://example.com/a#frag")
+    self assert: (info at: #path) equals: "/a"
+
+  testParseEmptyQueryKeepsQuestionMark =>
+    info := self assertOk: (HTTPClient parseUrl: "http://example.com/search?")
+    self assert: (info at: #path) equals: "/search?"
+
   // ===== normaliseMethod: =====
   testNormaliseLowercaseSymbol =>
     self assert: (HTTPClient normaliseMethod: #get) equals: "GET"
@@ -86,6 +103,9 @@ TestCase subclass: HTTPClientUtilsTest
   testCheckOptionsRejectsNonDictionary =>
     self should: [HTTPClient checkOptions: #()] raise: #type_error
     self should: [HTTPClient checkOptions: 42] raise: #type_error
+
+  testCheckOptionsRejectsUnknownKeys =>
+    self should: [HTTPClient checkOptions: #{#timeotu => 5}] raise: #type_error
 
   testCheckUrlAcceptsString =>
     self assert: (HTTPClient checkUrl: "http://x/") equals: "http://x/"
@@ -124,6 +144,9 @@ TestCase subclass: HTTPClientUtilsTest
   testCheckMaxBodyBytesRejectsNonInteger =>
     self should: [HTTPClient checkMaxBodyBytes: "many"] raise: #type_error
 
+  testCheckMaxBodyBytesRejectsFloat =>
+    self should: [HTTPClient checkMaxBodyBytes: 1.5] raise: #type_error
+
   // ===== headerLines: =====
   testHeaderLinesRendersPairs =>
     lines := HTTPClient headerLines: #(#("content-type", "application/json"), #("accept", "*/*"))
@@ -139,6 +162,18 @@ TestCase subclass: HTTPClientUtilsTest
     self should: [HTTPClient headerLines: #("nope")] raise: #type_error
     self should: [HTTPClient headerLines: #(#("only-name"))] raise: #type_error
     self should: [HTTPClient headerLines: #(#(42, "val"))] raise: #type_error
+
+  testHeaderLinesRejectCrlf =>
+    crlf := self assertOk: (Binary fromBytes: #(13, 10)) asString
+    self should: [
+      HTTPClient headerLines: #(#("x-ok", "a" ++ crlf ++ "Evil: 1"))
+    ] raise: #type_error
+    self should: [
+      HTTPClient headerLines: #(#("x" ++ crlf ++ "Evil: 1", "v"))
+    ] raise: #type_error
+    self should: [
+      HTTPClient headerLines: #((Binary fromBytes: #(13, 10)), "v")
+    ] raise: #type_error
 
   // ===== tlsOptionsFor: (hermetic TLS shape, ex-build_gun_opts tests) =====
   testTlsOptionsVerifyPeer =>
@@ -216,6 +251,13 @@ TestCase subclass: HTTPClientUtilsTest
   testHeaderHostLeavesNamesAlone =>
     self assert: (HTTPClient headerHost: "example.com") equals: "example.com"
 
+  testIdempotentMethods =>
+    self assert: (HTTPClient idempotent: #get)
+    self assert: (HTTPClient idempotent: "PUT")
+    self deny: (HTTPClient idempotent: "POST")
+    self deny: (HTTPClient idempotent: #post)
+    self deny: (HTTPClient idempotent: #patch)
+
   // ===== Error values =====
   testHttpErrorHoldsMessage =>
     e := (HTTPClient httpError: "boom") error
@@ -257,6 +299,11 @@ TestCase subclass: HTTPClientUtilsTest
   testResponseFromMissingStatusIsError =>
     result := HTTPClient responseFrom: #({#done, 0}) maxBodyBytes: #unlimited
     self deny: result isOk
+
+  testResponseFromUnknownPartIsError =>
+    result := HTTPClient responseFrom: #({#bogus, 0, 1}) maxBodyBytes: #unlimited
+    self deny: result isOk
+    self assert: result error message equals: "Request failed (unknown response part)"
 
   testResponseFromCapAboveSizeIsOk =>
     resp := self assertOk: (HTTPClient responseFrom: self sampleParts maxBodyBytes: 100000)
