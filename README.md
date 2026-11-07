@@ -2,11 +2,12 @@
 
 HTTP client and server library for [Beamtalk](https://beamtalk.dev).
 
-Built on [gun](https://github.com/ninenines/gun) (client) and
+Built on [mint](https://github.com/jamesc/beamtalk-mint) (client, a
+pure-Beamtalk HTTP/1.1 and HTTP/2 engine) and
 [Buccaneer](https://github.com/jamesc/beamtalk-buccaneer) (server), a
 pure-Beamtalk HTTP/1.1, HTTP/2 and WebSocket engine. Since 0.3.0 the
-server no longer uses cowboy; see the [CHANGELOG](CHANGELOG.md) for
-what changed.
+server no longer uses cowboy, and the client no longer uses gun; see
+the [CHANGELOG](CHANGELOG.md) for what changed.
 
 ## Installation
 

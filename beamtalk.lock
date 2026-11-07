@@ -25,13 +25,3 @@ url = "https://github.com/jamesc/beamtalk-hpack.git"
 reference = "tag:v0.1.1"
 sha = "34ebb37c8cd07c0c4dd28093c9519cbb5d912ef7"
 
-[[native_package]]
-name = "cowlib"
-version = "2.13.0"
-sha = ""
-
-[[native_package]]
-name = "gun"
-version = "2.1.0"
-sha = ""
-

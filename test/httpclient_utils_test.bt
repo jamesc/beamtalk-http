@@ -1,0 +1,273 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+// BT-4530: unit tests for the HTTPClient helpers that replaced the
+// gun native module (`native/beamtalk_http.erl`, gone with gun).
+// Ports `native/test/beamtalk_http_tests.erl` to BUnit: URL parsing
+// (`parseUrl:`), method normalisation (`normaliseMethod:`), option
+// validation (`checkHeaders:` et al), header rendering (`headerLines:`),
+// the TLS option shape (`tlsOptionsFor:`) and response building
+// (`responseFrom:maxBodyBytes:`). Network behaviour stays in
+// `test/httptest.bt` against the local fixture server.
+
+TestCase subclass: HTTPClientUtilsTest
+
+  // ===== parseUrl: — valid URLs =====
+  testParseHttpUrl =>
+    info := self assertOk: (HTTPClient parseUrl: "http://example.com/path")
+    self assert: (info at: #scheme) equals: "http"
+    self assert: (info at: #host) equals: "example.com"
+    self assert: (info at: #port) equals: 80
+    self assert: (info at: #path) equals: "/path"
+
+  testParseHttpsDefaultsPortAndPath =>
+    info := self assertOk: (HTTPClient parseUrl: "https://example.com")
+    self assert: (info at: #scheme) equals: "https"
+    self assert: (info at: #host) equals: "example.com"
+    self assert: (info at: #port) equals: 443
+    self assert: (info at: #path) equals: "/"
+
+  testParseCustomPort =>
+    info := self assertOk: (HTTPClient parseUrl: "http://localhost:8080/api")
+    self assert: (info at: #port) equals: 8080
+
+  testParseQueryPreserved =>
+    info := self assertOk: (HTTPClient parseUrl: "http://example.com/search?q=foo")
+    self assert: (info at: #path) equals: "/search?q=foo"
+
+  testParseIpv4Literal =>
+    info := self assertOk: (HTTPClient parseUrl: "http://127.0.0.1:8080/")
+    self assert: (info at: #host) equals: "127.0.0.1"
+    self assert: (info at: #port) equals: 8080
+
+  testParseIpv6Literal =>
+    info := self assertOk: (HTTPClient parseUrl: "http://[::1]:8080/")
+    self assert: (info at: #host) equals: "::1"
+    self assert: (info at: #port) equals: 8080
+
+  // ===== parseUrl: — invalid URLs answer Result errors, not raises =====
+  testParseFtpSchemeIsError =>
+    result := HTTPClient parseUrl: "ftp://example.com/file"
+    self deny: result isOk
+    self assert: result error message equals: "Invalid URL"
+
+  testParseMissingSchemeIsError =>
+    result := HTTPClient parseUrl: "example.com"
+    self deny: result isOk
+
+  testParseGarbageIsError =>
+    result := HTTPClient parseUrl: "not a url"
+    self deny: result isOk
+
+  testParseNonStringIsError =>
+    result := HTTPClient parseUrl: 42
+    self deny: result isOk
+
+  // ===== normaliseMethod: =====
+  testNormaliseLowercaseSymbol =>
+    self assert: (HTTPClient normaliseMethod: #get) equals: "GET"
+
+  testNormaliseUppercaseString =>
+    self assert: (HTTPClient normaliseMethod: "POST") equals: "POST"
+
+  testNormaliseLowercaseString =>
+    self assert: (HTTPClient normaliseMethod: "patch") equals: "PATCH"
+
+  testNormaliseUppercaseSymbol =>
+    self assert: (HTTPClient normaliseMethod: #PUT) equals: "PUT"
+
+  testNormaliseInvalidRaisesTypeError =>
+    self should: [HTTPClient normaliseMethod: 42] raise: #type_error
+
+  // ===== Option validators =====
+  testCheckOptionsAcceptsDictionary =>
+    self assert: (HTTPClient checkOptions: #{}) isNil
+
+  testCheckOptionsRejectsNonDictionary =>
+    self should: [HTTPClient checkOptions: #()] raise: #type_error
+    self should: [HTTPClient checkOptions: 42] raise: #type_error
+
+  testCheckUrlAcceptsString =>
+    self assert: (HTTPClient checkUrl: "http://x/") equals: "http://x/"
+
+  testCheckUrlRejectsNonString =>
+    self should: [HTTPClient checkUrl: 42] raise: #type_error
+
+  testCheckHeadersAcceptsList =>
+    self assert: (HTTPClient checkHeaders: #()) equals: #()
+
+  testCheckHeadersRejectsNonList =>
+    self should: [HTTPClient checkHeaders: "x"] raise: #type_error
+
+  testCheckBodyAcceptsString =>
+    self assert: (HTTPClient checkBody: "hi") equals: "hi"
+
+  testCheckBodyRejectsNonString =>
+    self should: [HTTPClient checkBody: 42] raise: #type_error
+
+  testCheckTimeoutAcceptsZero =>
+    self assert: (HTTPClient checkTimeout: 0) equals: 0
+
+  testCheckTimeoutRejectsNegative =>
+    self should: [HTTPClient checkTimeout: -1] raise: #type_error
+
+  testCheckTimeoutRejectsNonInteger =>
+    self should: [HTTPClient checkTimeout: "fast"] raise: #type_error
+
+  testCheckMaxBodyBytesAcceptsUnlimitedAndZero =>
+    self assert: (HTTPClient checkMaxBodyBytes: #unlimited) equals: #unlimited
+    self assert: (HTTPClient checkMaxBodyBytes: 0) equals: 0
+
+  testCheckMaxBodyBytesRejectsNegative =>
+    self should: [HTTPClient checkMaxBodyBytes: -1] raise: #type_error
+
+  testCheckMaxBodyBytesRejectsNonInteger =>
+    self should: [HTTPClient checkMaxBodyBytes: "many"] raise: #type_error
+
+  // ===== headerLines: =====
+  testHeaderLinesRendersPairs =>
+    lines := HTTPClient headerLines: #(#("content-type", "application/json"), #("accept", "*/*"))
+    self assert: lines equals: #("content-type: application/json", "accept: */*")
+
+  testHeaderLinesEmpty => self assert: (HTTPClient headerLines: #()) equals: #()
+
+  testHeaderLinesAcceptsTuples =>
+    lines := HTTPClient headerLines: #({"x-key", "val"})
+    self assert: lines equals: #("x-key: val")
+
+  testHeaderLinesMalformedRaisesTypeError =>
+    self should: [HTTPClient headerLines: #("nope")] raise: #type_error
+    self should: [HTTPClient headerLines: #(#("only-name"))] raise: #type_error
+    self should: [HTTPClient headerLines: #(#(42, "val"))] raise: #type_error
+
+  // ===== tlsOptionsFor: (hermetic TLS shape, ex-build_gun_opts tests) =====
+  testTlsOptionsVerifyPeer =>
+    opts := HTTPClient tlsOptionsFor: "example.com"
+    self assert: (opts anySatisfy: [:each | each =:= {#verify, #verify_peer}])
+
+  testTlsOptionsCarrySystemCAs =>
+    opts := HTTPClient tlsOptionsFor: "example.com"
+    found := nil
+    opts
+      do: [:each |
+        ((each isKindOf: Tuple) and: [
+          (each at: 1) =:= #cacerts
+        ]) ifTrue: [found := each at: 2]
+      ]
+    self deny: found isNil
+    self assert: (found size > 0)
+
+  testTlsOptionsSendSniForHostname =>
+    opts := HTTPClient tlsOptionsFor: "example.com"
+    self
+      assert: (opts anySatisfy: [:each |
+        each =:= {#server_name_indication, "example.com" asCharlist}
+      ])
+
+  testTlsOptionsOmitSniForIpLiteral =>
+    opts := HTTPClient tlsOptionsFor: "127.0.0.1"
+    self
+      deny: (opts anySatisfy: [:each |
+        (each isKindOf: Tuple) and: [(each at: 1) =:= #server_name_indication]
+      ])
+
+  testTlsOptionsCheckHostname =>
+    opts := HTTPClient tlsOptionsFor: "example.com"
+    self
+      assert: (opts
+        anySatisfy: [:each |
+          (each isKindOf: Tuple) and: [
+            (each at: 1) =:= #customize_hostname_check
+          ]
+        ])
+
+  testTlsOptionsOfferH2AndHttp11 =>
+    opts := HTTPClient tlsOptionsFor: "example.com"
+    offered := nil
+    opts
+      do: [:each |
+        ((each isKindOf: Tuple) and: [
+          (each at: 1) =:= #alpn_advertised_protocols
+        ]) ifTrue: [offered := each at: 2]
+      ]
+    self deny: offered isNil
+    self assert: offered size equals: 2
+    self assert: (offered at: 1) equals: (Binary fromIolist: "h2")
+    self assert: (offered at: 2) equals: (Binary fromIolist: "http/1.1")
+
+  // ===== resolveHost: / headerHost: =====
+  testResolveIpv4Literal =>
+    self assert: (HTTPClient resolveHost: "127.0.0.1") value equals: {127, 0, 0, 1}
+
+  testResolveIpv6Literal =>
+    self assert: (HTTPClient resolveHost: "::1") value equals: {0, 0, 0, 0, 0, 0, 0, 1}
+
+  testResolveLocalhost =>
+    // Loopback resolves without touching the network.
+    self assert: (HTTPClient resolveHost: "localhost") isOk
+
+  testResolveUnknownHostIsError =>
+    result := HTTPClient resolveHost: "nonexistent.invalid"
+    self deny: result isOk
+
+  testHeaderHostBracketsIpv6 =>
+    self assert: (HTTPClient headerHost: "::1") equals: "[::1]"
+
+  testHeaderHostLeavesNamesAlone =>
+    self assert: (HTTPClient headerHost: "example.com") equals: "example.com"
+
+  // ===== Error values =====
+  testHttpErrorHoldsMessage =>
+    e := (HTTPClient httpError: "boom") error
+    self assert: (e isKindOf: Error)
+    self assert: e message equals: "boom"
+
+  testTransportErrorAppendsReason =>
+    e := (HTTPClient transportError: "Request failed" reason: #econnrefused) error
+    self assert: (e isKindOf: Error)
+    self assert: e message equals: "Request failed (#econnrefused)"
+
+  // ===== responseFrom:maxBodyBytes: =====
+  sampleParts =>
+    #({#status, 0, 200}, {#headers, 0, #((MintHeader name: "content-type" value: "text/plain"))}, {#data, 0, (Binary fromBytes: #(104, 105))}, {#done, 0})
+
+  testResponseFromBuildsResponse =>
+    resp := self assertOk: (HTTPClient responseFrom: self sampleParts maxBodyBytes: #unlimited)
+    self assert: resp status equals: 200
+    self assert: resp headers equals: #(#("content-type", "text/plain"))
+    self assert: resp body equals: "hi"
+    self assert: (resp body class name) equals: #String
+
+  testResponseFromTagsNonUtf8BodyBinary =>
+    parts := #({#status, 0, 200}, {#headers, 0, #()}, {#data, 0, (Binary fromBytes: #(255, 254, 253))}, {#done, 0})
+    resp := self assertOk: (HTTPClient responseFrom: parts maxBodyBytes: #unlimited)
+    self assert: (resp body class name) equals: #Binary
+
+  testResponseFromSkipsInterimResponses =>
+    parts := #({#status, 0, 103}, {#headers, 0, #()}, {#status, 0, 200}, {#headers, 0, #()}, {#data, 0, (Binary fromBytes: #(104, 105))}, {#done, 0})
+    resp := self assertOk: (HTTPClient responseFrom: parts maxBodyBytes: #unlimited)
+    self assert: resp status equals: 200
+    self assert: resp body equals: "hi"
+
+  testResponseFromConcatenatesDataParts =>
+    parts := #({#status, 0, 200}, {#headers, 0, #()}, {#data, 0, (Binary fromBytes: #(104, 105))}, {#data, 0, (Binary fromBytes: #(33))}, {#done, 0})
+    resp := self assertOk: (HTTPClient responseFrom: parts maxBodyBytes: #unlimited)
+    self assert: resp body equals: "hi!"
+
+  testResponseFromMissingStatusIsError =>
+    result := HTTPClient responseFrom: #({#done, 0}) maxBodyBytes: #unlimited
+    self deny: result isOk
+
+  testResponseFromCapAboveSizeIsOk =>
+    resp := self assertOk: (HTTPClient responseFrom: self sampleParts maxBodyBytes: 100000)
+    self assert: resp status equals: 200
+
+  testResponseFromCapBelowSizeIsError =>
+    result := HTTPClient responseFrom: self sampleParts maxBodyBytes: 1
+    self deny: result isOk
+    self assert: result error message equals: "Response body exceeded limit"
+
+  testResponseFromCapAtSizeIsOk =>
+    // Exactly at the cap still passes (only *over* fails).
+    resp := self assertOk: (HTTPClient responseFrom: self sampleParts maxBodyBytes: 2)
+    self assert: resp status equals: 200

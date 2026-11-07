@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+### HTTPClient runs on Mint; gun is removed
+
+`HTTPClient` now performs requests through
+[Mint](https://github.com/jamesc/beamtalk-mint), a pure-Beamtalk
+HTTP/1.1 and HTTP/2 client, instead of gun. `native/beamtalk_http.erl`
+(and its `beamtalk_http_tests` / `beamtalk_http_response` companions)
+is deleted, gun and cowlib leave `beamtalk.toml`/`beamtalk.lock`, and
+the client helpers live in `src/httpclient.bt` with BUnit coverage in
+`test/httpclient_utils_test.bt`. The public API is unchanged: the same
+one-shot verbs, `request:url:options:` (`#headers`/`#body`/`#timeout`/
+`#maxBodyBytes`) and the persistent `spawnWith:` style, with the same
+`Result` / `type_error` outcomes.
+
+Behaviour notes:
+
+- **`https` negotiates H1 and H2.** Plain `http` uses `MintHTTP1`;
+  `https` offers both `h2` and `http/1.1` over ALPN with gun's
+  verification (`verify_peer` against the system CA bundle, SNI,
+  HTTPS hostname check) and runs the negotiated protocol.
+- **Persistent clients reuse one connection.** Instance requests share
+  the actor's Mint connection across calls (reconnecting when the
+  server closed it); one-shot class methods still connect per request.
+- **Timeouts.** The `#timeout` option still bounds a request, but the
+  connect phase now shares the request timeout instead of gun's
+  dedicated 2s connect / 5s TLS-handshake caps.
+- **`maxBodyBytes` is enforced after the body arrives.** Mint delivers
+  whole bodies, so an over-large body is still downloaded before it is
+  refused, where gun aborted the transfer mid-stream.
+
 ## 0.3.0 (unreleased)
 
 ### Breaking: the server runs on Buccaneer only; cowboy is removed
