@@ -1,0 +1,206 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// One closed-loop load worker (BT-4546): hammers the driver's server
+/// until its deadline, streaming per-request latencies to its samples
+/// file. Started with `run!`; rendezvous with the driver is file-based
+/// (`done` marker, `errors` marker only when nonempty), so the driver
+/// never parses file contents.
+Actor subclass: BenchWorker
+  state: mode :: String = ""
+  state: baseUrl :: String = ""
+  state: host :: String = "127.0.0.1"
+  state: port :: Integer = 0
+  state: deadlineMs :: Integer = 0
+  state: warmupEndMs :: Integer = 0
+  state: samplesPath :: String = ""
+  state: donePath :: String = ""
+  state: errPath :: String = ""
+  state: streams :: Integer = 0
+
+  run =>
+    self.mode match: [
+      "oneshot" -> self runOneshot;
+      "persistent" -> self runPersistent;
+      "post" -> self runPost;
+      "ppost" -> self runPpost;
+      "pbig" -> self runPbig;
+      "h2" -> self runH2;
+      _ -> Error signal: "unknown bench mode"
+    ]
+    File writeAll: self.donePath contents: "done"
+
+  emit: dt :: Integer from: t0 :: Integer =>
+    (t0 >= self.warmupEndMs) ifTrue: [
+      File appendBinary: self.samplesPath contents: "{dt}\n"
+    ]
+
+  finish: errs :: Integer =>
+    errs > 0 ifTrue: [File writeAll: self.errPath contents: "{errs} errors"]
+
+  noteError: resp =>
+    (File exists: self.errPath ++ ".first") ifFalse: [
+      File writeAll: self.errPath ++ ".first" contents: (resp error printString)
+    ]
+
+  // Fresh connection per request: connect + request + close cost. Paced:
+  // loopback only has ~16k ephemeral ports with tens of seconds of
+  // TIME_WAIT, so uncapped churn fails with `#eaddrnotavail` (an
+  // environment limit, not a client result). The sleep sits outside the
+  // measured region.
+  runOneshot =>
+    errs := 0
+    [(Time monotonic: #millisecond) < self.deadlineMs]
+      whileTrue: [
+        t0 := Time monotonic: #millisecond
+        resp := HTTPClient get: self.baseUrl ++ "/"
+        t1 := Time monotonic: #millisecond
+        resp isError
+          ifTrue: [
+            errs := errs + 1
+            self noteError: resp
+          ]
+        resp isOk ifTrue: [self emit: t1 - t0 from: t0]
+        Timer sleep: 2
+      ]
+    self finish: errs
+
+  // One persistent client: keep-alive reuse on a single connection.
+  runPersistent =>
+    errs := 0
+    client := HTTPClient spawnWith: #{#baseUrl => self.baseUrl}
+    [(Time monotonic: #millisecond) < self.deadlineMs]
+      whileTrue: [
+        t0 := Time monotonic: #millisecond
+        resp := client get: "/"
+        t1 := Time monotonic: #millisecond
+        resp isError
+          ifTrue: [
+            errs := errs + 1
+            self noteError: resp
+          ]
+        resp isOk ifTrue: [self emit: t1 - t0 from: t0]
+      ]
+    client stop
+    self finish: errs
+
+  // One-shot POST with a 64 KiB body: upload path under load.
+  runPost =>
+    errs := 0
+    body := "x" repeat: 65536
+    [(Time monotonic: #millisecond) < self.deadlineMs]
+      whileTrue: [
+        t0 := Time monotonic: #millisecond
+        resp := HTTPClient post: self.baseUrl ++ "/echo" body: body
+        t1 := Time monotonic: #millisecond
+        resp isError
+          ifTrue: [
+            errs := errs + 1
+            self noteError: resp
+          ]
+        resp isOk ifTrue: [self emit: t1 - t0 from: t0]
+      ]
+    self finish: errs
+
+  // Persistent POST with a 64 KiB body: upload path on a reused connection.
+  runPpost =>
+    errs := 0
+    body := "x" repeat: 65536
+    client := HTTPClient spawnWith: #{#baseUrl => self.baseUrl}
+    [(Time monotonic: #millisecond) < self.deadlineMs]
+      whileTrue: [
+        t0 := Time monotonic: #millisecond
+        resp := client post: "/echo" body: body
+        t1 := Time monotonic: #millisecond
+        resp isError
+          ifTrue: [
+            errs := errs + 1
+            self noteError: resp
+          ]
+        resp isOk ifTrue: [self emit: t1 - t0 from: t0]
+      ]
+    client stop
+    self finish: errs
+
+  // Persistent GET of the 1 MiB body: download side under sustained transfer.
+  runPbig =>
+    errs := 0
+    client := HTTPClient spawnWith: #{#baseUrl => self.baseUrl}
+    [(Time monotonic: #millisecond) < self.deadlineMs]
+      whileTrue: [
+        t0 := Time monotonic: #millisecond
+        resp := client get: "/big"
+        t1 := Time monotonic: #millisecond
+        resp isError
+          ifTrue: [
+            errs := errs + 1
+            self noteError: resp
+          ]
+        resp isOk ifTrue: [self emit: t1 - t0 from: t0]
+      ]
+    client stop
+    self finish: errs
+
+  // Multiplexed H2: one connection, repeated waves of interleaved streams.
+  runH2 =>
+    errs := 0
+    conn := self openH2
+    [(Time monotonic: #millisecond) < self.deadlineMs]
+      whileTrue: [
+        conn isNil ifTrue: [conn := self openH2]
+        conn isNil
+          ifFalse: [
+            out := self wave: conn errs: errs
+            conn := out at: 1
+            errs := out at: 2
+          ]
+      ]
+    conn isNil ifFalse: [conn close]
+    self finish: errs
+
+  openH2 =>
+    made := MintHTTP2 connect: self.host port: self.port
+    made isError ifTrue: [^nil]
+    made value
+
+  // Open `streams` requests, then pump every ref to done. Answers
+  // `{live-or-nil, errs}`: failure counts accumulate through the value,
+  // never through a captured write (the block would escape).
+  wave: conn errs: n =>
+    refs := #()
+    live := conn
+    ok := true
+    fails := n
+    self.streams
+      timesRepeat: [
+        t0 := Time monotonic: #millisecond
+        made := live
+          request: "GET"
+          target: "/"
+          headers: #()
+          body: ""
+        made isError ifTrue: [ok := false]
+        ok
+          ifTrue: [
+            live := made value at: 1
+            refs := refs ++ #(#((made value at: 2), t0))
+          ]
+      ]
+    ok
+      ifTrue: [
+        refs
+          do: [:entry |
+            ref := entry at: 1
+            t0 := entry at: 2
+            got := live stream: ref timeout: 10000
+            got isError ifTrue: [ok := false]
+            ok
+              ifTrue: [
+                live := got value at: 1
+                self emit: (Time monotonic: #millisecond) - t0 from: t0
+              ]
+          ]
+      ]
+    ok ifTrue: [^{live, fails}]
+    live close
+    {nil, fails + 1}

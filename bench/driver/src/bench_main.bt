@@ -1,0 +1,113 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// Client load-bench driver (BT-4546): `beamtalk run BenchMain main: -- ...`.
+///
+/// Starts a local `HTTPServer` (Buccaneer backend, ephemeral port),
+/// spawns one `BenchWorker` actor per connection, waits for their done
+/// markers, then writes a `meta.json` line. Rendezvous is file-based so
+/// the driver never parses file contents; `bench/report.py` computes
+/// statistics from the workers' samples files.
+Object subclass: BenchMain
+
+  class main: args :: List(String) =>
+    opts := self parseArgs: args
+    row := opts at: "--row"
+    mode := opts at: "--mode"
+    workers := (opts at: "--workers") asInteger
+    durationMs := (opts at: "--duration-ms") asInteger
+    warmupMs := (opts at: "--warmup-ms") asInteger
+    out := opts at: "--out"
+    impl := opts at: "--impl"
+    round := opts at: "--round"
+    streams := (opts at: "--streams") asInteger
+    big := "x" repeat: 1048576
+    srv := HTTPServer start: 0 handler: [:req | BenchMain handle: req big: big]
+    port := srv port
+    base := "http://127.0.0.1:" ++ port asString
+    now := Time monotonic: #millisecond
+    warmupEnd := now + warmupMs
+    deadline := now + warmupMs + durationMs
+    1
+      to: workers
+      do: [:i |
+        w := BenchWorker
+          spawnWith: #{
+            #mode => mode,
+            #baseUrl => base,
+            #host => "127.0.0.1",
+            #port => port,
+            #deadlineMs => deadline,
+            #warmupEndMs => warmupEnd,
+            #samplesPath => out ++ "/samples-w" ++ i asString,
+            #donePath => out ++ "/done-w" ++ i asString,
+            #errPath => out ++ "/errors-w" ++ i asString,
+            #streams => streams
+          }
+        w run!
+      ]
+    waitUntil := deadline + 120000
+    done := false
+    [done not and: [(Time monotonic: #millisecond) < waitUntil]]
+      whileTrue: [
+        Timer sleep: 100
+        done := self allDone: workers out: out
+      ]
+    done
+      ifFalse: [
+        srv stop
+        Error signal: "bench workers timed out"
+      ]
+    (self anyErrors: workers out: out)
+      ifTrue: [
+        srv stop
+        Error signal: "bench workers reported errors"
+      ]
+    File
+      writeAll: out ++ "/meta.json"
+      contents: ("\{""row"": """
+        ++ row
+        ++ """, ""impl"": """
+        ++ impl
+        ++ """, ""round"": "
+        ++ round
+        ++ ", ""workers"": "
+        ++ workers asString
+        ++ ", ""duration_ms"": "
+        ++ durationMs asString
+        ++ ", ""warmup_ms"": "
+        ++ warmupMs asString
+        ++ ", ""streams"": "
+        ++ streams asString
+        ++ "}")
+    srv stop
+
+  class parseArgs: args => self parseArgs: args into: Dictionary new
+
+  // Program arguments arrive as Binaries, which never `=:=` (and never
+  // hash like) Strings: normalize to text once, here.
+  class parseArgs: args into: opts =>
+    args isEmpty ifTrue: [^opts]
+    self parseArgs: (args drop: 2) into: (opts at: ((args at: 1) asStringUnchecked) put: ((args at: 2) asStringUnchecked))
+
+  class allDone: workers out: out =>
+    ok := true
+    1 to: workers do: [:i |
+      (File exists: out ++ "/done-w" ++ i asString) ifFalse: [ok := false]
+    ]
+    ok
+
+  class anyErrors: workers out: out =>
+    bad := false
+    1 to: workers do: [:i |
+      (File exists: out ++ "/errors-w" ++ i asString) ifTrue: [bad := true]
+    ]
+    bad
+
+  class handle: req big: big =>
+    req path match: [
+      "/" -> HTTPResponse new: #{#status => 200, #body => "hello world"};
+      "/echo" -> HTTPResponse new: #{#status => 200, #body => req body};
+      "/big" -> HTTPResponse new: #{#status => 200, #body => big};
+      _ -> HTTPResponse new: #{#status => 404, #body => "no such endpoint"}
+    ]

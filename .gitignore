@@ -1,5 +1,6 @@
 # Build outputs
 /_build/
+/bench/driver/_build/
 *.beam
 *.core
 erl_crash.dump

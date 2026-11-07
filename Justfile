@@ -31,6 +31,14 @@ clean:
 # Full CI check (fmt + lint + build + test)
 ci: fmt lint build test
 
+# Client load bench (BT-4546): every row, interleaved rounds (bench/README.md)
+bench *ARGS:
+    bench/run.sh {{ARGS}}
+
+# One short bench round on the smoke rows, as CI runs it (non-blocking)
+bench-smoke:
+    bench/run.sh --impls mint --rows oneshot-get-c1,persistent-get-c1 --rounds 1 --duration 1000 --warmup 300
+
 # Tag a release from beamtalk.toml version
 release:
     #!/usr/bin/env bash
