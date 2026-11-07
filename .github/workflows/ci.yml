@@ -40,3 +40,9 @@ jobs:
 
       - name: Test
         run: just test
+
+      - name: Bench smoke
+        # Informational like buccaneer's harness: shared runners skew
+        # numbers and the timing is load-sensitive, so never blocking.
+        run: just bench-smoke
+        continue-on-error: true

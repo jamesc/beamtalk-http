@@ -1,0 +1,11 @@
+# Copyright 2026 James Casey
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "bench_driver"
+version = "0.1.0"
+description = "Client load-bench driver for BT-4546 (not published)"
+
+[dependencies]
+http = { path = "../.." }
+mint = "0.1.0"
