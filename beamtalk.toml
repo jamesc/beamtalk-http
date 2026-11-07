@@ -9,4 +9,4 @@ description = "HTTP client and server for Beamtalk"
 [dependencies]
 buccaneer = "0.1.3"
 hpack = "0.1.1"
-mint = { path = "/tmp/wt-mint-ref" }
+mint = "0.1.0"
