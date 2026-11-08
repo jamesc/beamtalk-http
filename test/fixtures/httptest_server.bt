@@ -15,6 +15,7 @@
 /// | `/status/:code` | :code  | empty                                    |
 /// | `/json`         | 200    | `{"type":"json","value":42}`             |
 /// | `/echo-headers` | 200    | JSON object of the request headers       |
+/// | `/large`        | 200    | 100,000 `x` bytes (cap tests)              |
 ///
 /// JSON bodies go out as `application/json`. Anything else is a 404.
 Object subclass: HTTPTestServer
@@ -39,6 +40,10 @@ Object subclass: HTTPTestServer
       "/delete" -> self json: #{"method" => "DELETE"};
       "/json" -> self json: #{"type" => "json", "value" => 42};
       "/echo-headers" -> self json: (self headerMap: req headers);
+      "/large" -> HTTPResponse new: #{
+        #status => 200,
+        #body => ("x" repeat: 100000)
+      };
       _ -> self statusOrMissing: path
     ]
 
