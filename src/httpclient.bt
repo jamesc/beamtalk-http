@@ -415,48 +415,30 @@ Actor subclass: HTTPClient
           port: port
           timeout: (self remaining: ms from: start)
       ]
-    // No negotiation (a server without ALPN) proceeds as HTTP/1.1, like
-    // Mint's own check — but a protocol we never offered is a hard
-    // error, never a misparse.
-    (negotiated isNil or: [negotiated =:= (Binary fromIolist: "http/1.1")])
-      ifFalse: [
-        (sock value) close
-        ^self transportError: "Could not open connection" reason: negotiated
-      ]
-    Result
-      ok: (MintHTTP1
-        socket: sock value
-        transport: #tls
-        host: (self headerHost: host)
-        port: port
-        buffer: ""
-        timeout: ms
-        nextRef: 0
-        inFlightRef: nil
-        inFlightMethod: "")
-
-  /// Wrap a negotiated-`h2` socket as a `MintHTTP2` value and run its
-  /// handshake (mirroring `MintHTTP2>>connectTls:` past its own socket
-  /// setup, which cannot take our CA options). Closes the socket and
-  /// answers `Result error:` when the handshake fails.
-  class connectH2: sock host: host port: port timeout: ms =>
-    opened := (MintHTTP2
-      socket: sock
-      transport: #tls
+    // Anything else (including no negotiation, a server without ALPN)
+    // goes through `MintHTTP1 connectTlsOn:` (BT-4551), which answers
+    // HTTP/1.1 or a mismatch error for a protocol we never offered —
+    // never a misparse. It closes the socket itself on mismatch.
+    built := MintHTTP1
+      connectTlsOn: sock value
       host: (self headerHost: host)
       port: port
-      buffer: ""
-      timeout: ms
-      nextId: 1
-      streams: #{}
-      connSendWindow: MintH2Frame defaultWindow
-      connRecvWindow: MintH2Frame defaultWindow
-      peerMaxFrame: MintH2Frame defaultMaxFrame
-      peerInitWindow: MintH2Frame defaultWindow
-      peerMaxStreams: nil
-      encodeTable: (HPACK newTable: 4096)
-      decodeTable: (HPACK newTable: 4096)
-      goawayLastId: nil) open: ms
+      options: #{#timeout => ms, #alpn => #("http/1.1")}
+    built isError ifTrue: [
+      ^self transportError: "Could not open connection" reason: built error
+    ]
+    built
+
+  /// Wrap a negotiated-`h2` socket via `MintHTTP2>>connectTlsOn:`
+  /// (BT-4551 — the hand-built value plus `open:` is that
+  /// constructor's job now). Closes the socket and answers `Result
+  /// error:` when the handshake fails.
+  class connectH2: sock host: host port: port timeout: ms =>
+    opened := MintHTTP2
+      connectTlsOn: sock
+      host: (self headerHost: host)
+      port: port
+      options: #{#timeout => ms}
     opened isError
       ifTrue: [
         sock close
@@ -464,18 +446,13 @@ Actor subclass: HTTPClient
       ]
     opened
 
-  /// The TLS options for an `https` host (BT-4530): `verify_peer` with
-  /// the system CA bundle, SNI as a charlist (`String>>asCharlist`,
-  /// BT-4324 — `ssl` rejects a Binary SNI, so `MintHTTP1>>sniOf`'s value
-  /// is only reused for its IP-literal test), the HTTPS hostname check,
-  /// and ALPN offering `h2` and `http/1.1` as raw Binaries.
+  /// The TLS options for an `https` host: `verify_peer` against the
+  /// system CA bundle, the HTTPS hostname check, SNI as a charlist
+  /// (omitted for IP literals), and ALPN offering `h2` and
+  /// `http/1.1` (BT-4551 — owned by the `Tls` builder,
+  /// retiring the hand-rolled `cacerts_get`/match-fun/SNI assembly).
   class tlsOptionsFor: host :: String -> List(Object) =>
-    cacerts := (Erlang public_key) cacerts_get
-    matchfun := (Erlang public_key) pkix_verify_hostname_match_fun: #https
-    base :: List(Object) := #(#binary, {#packet, #raw}, {#active, false}, {#verify, #verify_peer}, {#cacerts, cacerts}, {#alpn_advertised_protocols, #((Binary fromIolist: "h2"), (Binary fromIolist: "http/1.1"))}, {#customize_hostname_check, #({#match_fun, matchfun})})
-    sni := MintHTTP1 sniOf: host
-    sni isNil ifTrue: [^base]
-    base ++ #({#server_name_indication, host asCharlist})
+    Tls clientOptions: host alpn: #("h2", "http/1.1")
 
   /// Answer the live connection or nil, closing a dead one best effort.
   class liveConn: conn =>
