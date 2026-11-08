@@ -268,7 +268,8 @@ Actor subclass: HTTPClient
   /// `maxBodyBytes` cap. Interim (`1xx`) responses are skipped by keeping
   /// the last status/headers seen; `#data` bytes are concatenated from
   /// every data part. The body answers a String when it is valid UTF-8,
-  /// else a Binary (the `beamtalk_http_text` policy).
+  /// else a Binary (tagged via `Binary>>asString`, straight from the
+  /// stdlib — no native helper).
   class responseFrom: parts maxBodyBytes: cap =>
     status := nil
     pairs := #()
@@ -296,7 +297,8 @@ Actor subclass: HTTPClient
     ((cap isKindOf: Integer) and: [
       body size > cap
     ]) ifTrue: [^self httpError: "Response body exceeded limit"]
-    tagged := (Erlang beamtalk_http_text) maybe_tag: body
+    converted := body asString
+    tagged := converted isError ifTrue: [body] ifFalse: [converted value]
     Result ok: (HTTPResponse new: #{
       #status => status,
       #headers => pairs,
