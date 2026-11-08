@@ -685,7 +685,9 @@ Actor subclass: HTTPClient
     ]
 
   /// Milliseconds on the monotonic clock, for request deadlines.
-  class nowMs -> Integer => (Erlang erlang) monotonic_time: #millisecond
+  /// Monotonic, not wall-clock: `Time nowMs` (`system_time`) must NOT
+  /// be substituted here — it jumps with NTP and would break deadlines.
+  class nowMs -> Integer => Time monotonic: #millisecond
 
   /// Whether an HTTP method is safe to retry (RFC 9110 idempotent
   /// methods). Answers false for anything else, including unparsable
