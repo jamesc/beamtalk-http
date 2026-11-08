@@ -419,6 +419,40 @@ TestCase subclass: HTTPTest
     self deny: result isOk
     self assert: slow stop equals: #ok
 
+  testNeverRespondingServerAnswersWithinTimeout =>
+    hung := HTTPServer
+      start: 0
+      handler: [:req |
+        (Erlang timer) sleep: 3000
+        HTTPResponse new: #{#status => 200, #body => "too late"}
+      ]
+      options: #{}
+    url := "http://localhost:" ++ hung port asString ++ "/hung"
+    start := Time monotonic: #millisecond
+    result := HTTPClient
+      request: #get
+      url: url
+      options: #{#timeout => 300}
+    elapsed := (Time monotonic: #millisecond) - start
+    self deny: result isOk
+    self assert: (elapsed < 3000)
+    self assert: hung stop equals: #ok
+
+  testLargeBodyWithinCapReturnsOk =>
+    resp := (HTTPClient
+      request: #get
+      url: self.baseUrl ++ "/large"
+      options: #{#maxBodyBytes => 200000}) unwrap
+    self assert: resp status equals: 200
+    self assert: (resp body size) equals: 100000
+
+  testLargeBodyOverCapReturnsError =>
+    result := HTTPClient
+      request: #get
+      url: self.baseUrl ++ "/large"
+      options: #{#maxBodyBytes => 100}
+    self deny: result isOk
+
   testInvalidUrlSchemeReturnsHttpError =>
     result := HTTPClient get: "not-a-url"
     self deny: result isOk
