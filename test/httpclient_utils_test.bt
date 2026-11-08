@@ -239,6 +239,32 @@ TestCase subclass: HTTPClientUtilsTest
     self assert: (offered at: 1) equals: (Binary fromIolist: "h2")
     self assert: (offered at: 2) equals: (Binary fromIolist: "http/1.1")
 
+  // ===== connectTls: failure shape (BT-4551 follow-up) =====
+  testTlsToClosedPortIsTransportError =>
+    // Bind a loopback port and close it, so the connect below fails
+    // fast (refused — or a handshake failure if the port was
+    // recycled; either way a `Result error:`, never a raise and
+    // never a misparse). This pins the `connectTls:` error contract
+    // through the new `connectTlsOn:` routing. The no-ALPN →
+    // HTTP/1.1 fallback and the mismatch close live in `MintHTTP1
+    // connectTlsOn:`, pinned hermetically by mint's own suite; a
+    // compliant peer can only negotiate a protocol the client
+    // offered, so the mismatch arm is unreachable from here except
+    // via a non-compliant server. (`verify_peer` is baked into
+    // `tlsOptionsFor:`, so no local fixture-cert server can stand in
+    // for a real fallback handshake.)
+    lsock := self assertOk: (MintHTTP1 bare: ((Erlang gen_tcp) listen: 0 with: #(#binary, {#packet, #raw}, {#active, false}, {#reuseaddr, true}, {#ip, {127, 0, 0, 1}})))
+    {_addr, port} := self assertOk: (MintHTTP1 bare: ((Erlang inet) sockname: lsock))
+    (Erlang gen_tcp) close: lsock
+    result := HTTPClient
+      connectTls: "127.0.0.1"
+      port: port
+      timeout: 2000
+    self deny: result isOk
+    e := result error
+    self assert: (e isKindOf: Error)
+    self assert: (e message startsWith: "Could not open connection")
+
   // ===== resolveHost: / headerHost: =====
   testResolveIpv4Literal =>
     self assert: (HTTPClient resolveHost: "127.0.0.1" timeout: 5000) value equals: {127, 0, 0, 1}
