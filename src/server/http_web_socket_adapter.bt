@@ -20,10 +20,10 @@
 /// `terminate:` answers the handler's `onClose:` answer so tests can
 /// observe it; the engine ignores it.
 sealed Value subclass: HttpWebSocketAdapter
-  field: handlerClass :: Object = nil
+  field: handlerClass :: Dynamic = nil
   field: request :: Object = nil
-  field: state :: Object = nil
-  field: ws :: Object = nil
+  field: state :: Dynamic = nil
+  field: ws :: Dynamic = nil
 
   /// A handler for `handlerClass` and the upgrade's `request`. The
   /// handle and first state arrive in `init`, in the connection
