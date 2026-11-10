@@ -23,7 +23,15 @@ TestCase subclass: WebSocketAdapterTest
         #exchange => nil
       }
 
-  liveEcho -> Object => ((self adapterFor: WsEchoHandler) init) state
+  /// `WebSocketResult state` is typed Object; the tests poke the live
+  /// adapter inside it directly, so hand it back as Dynamic.
+  dyn: value :: Object -> Dynamic => value
+
+  liveOf: handlerClass :: Object -> Dynamic =>
+    result := (self adapterFor: handlerClass) init
+    self dyn: result state
+
+  liveEcho -> Dynamic => self liveOf: WsEchoHandler
 
   mailed: message :: Object -> Boolean =>
     ((((Erlang erlang) process_info: Pid current with: #messages) at: 2) includes: message)
@@ -31,8 +39,8 @@ TestCase subclass: WebSocketAdapterTest
   testInitAnswersFirstState =>
     result := (self adapterFor: WsEchoHandler) init
     self assert: result kind equals: #ok
-    self assert: (result state state opened) equals: true
-    self assert: (result state ws) notNil
+    self assert: ((self dyn: result state) state opened) equals: true
+    self assert: ((self dyn: result state) ws) notNil
 
   testHandleInTextEchoes =>
     result := self liveEcho handleIn: {#text, "hi"}
@@ -48,19 +56,19 @@ TestCase subclass: WebSocketAdapterTest
     self assert: result frames equals: #({#binary, data})
 
   testHandleInWithoutSendsStaysOk =>
-    live := ((self adapterFor: WsMinimalHandler) init) state
+    live := self liveOf: WsMinimalHandler
     result := live handleIn: {#text, "hi"}
     self assert: result kind equals: #ok
     self assert: (result state state texts) equals: 1
 
   testCallbackFramesPushInOrder =>
-    live := ((self adapterFor: WsBurstHandler) init) state
+    live := self liveOf: WsBurstHandler
     result := live handleIn: {#text, "go"}
     self assert: result kind equals: #push
     self assert: result frames equals: #({#text, "go"}, {#text, "again"})
 
   testCallbackCloseStopsAfterItsFrames =>
-    live := ((self adapterFor: WsBurstHandler) init) state
+    live := self liveOf: WsBurstHandler
     result := live handleIn: {#text, "bye"}
     self assert: result kind equals: #stop
     self assert: result code equals: 4001
@@ -92,7 +100,7 @@ TestCase subclass: WebSocketAdapterTest
     self assert: result frames equals: #({#text, "info"})
 
   testHandleInfoWithoutOnInfoStays =>
-    live := ((self adapterFor: WsMinimalHandler) init) state
+    live := self liveOf: WsMinimalHandler
     result := live handleInfo: "hello"
     self assert: result kind equals: #ok
     self assert: result state equals: live
@@ -102,7 +110,7 @@ TestCase subclass: WebSocketAdapterTest
     self assert: result equals: {#closed, #normal}
 
   testTerminateWithoutOnCloseAnswersNil =>
-    live := ((self adapterFor: WsMinimalHandler) init) state
+    live := self liveOf: WsMinimalHandler
     self assert: (live terminate: #normal) equals: nil
 
   testHandleEnforcesOwner =>

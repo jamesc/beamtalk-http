@@ -234,9 +234,10 @@ TestCase subclass: HTTPTest
     parsed := self assertOk: resp bodyAsJson
     #{"x-req-header" => echoed} := parsed
     self assert: echoed equals: "req"
-    self assert: (parsed at: "x-client-header" ifAbsent: [
-      "absent"
-    ]) equals: "absent"
+    parsed match: [
+      #{"x-client-header" => _} -> self fail: "x-client-header leaked";
+      _ -> nil
+    ]
     self assert: client stop equals: #ok
 
   // ===== Per-verb headers conveniences =====
@@ -289,9 +290,10 @@ TestCase subclass: HTTPTest
     parsed := self assertOk: resp bodyAsJson
     #{"x-verbose-test" => echoed} := parsed
     self assert: echoed equals: "iget"
-    self assert: (parsed at: "x-client-header" ifAbsent: [
-      "absent"
-    ]) equals: "absent"
+    parsed match: [
+      #{"x-client-header" => _} -> self fail: "x-client-header leaked";
+      _ -> nil
+    ]
     self assert: client stop equals: #ok
 
   testInstancePostHeadersBody =>

@@ -191,13 +191,7 @@ TestCase subclass: HTTPClientUtilsTest
 
   testTlsOptionsCarrySystemCAs =>
     opts := HTTPClient tlsOptionsFor: "example.com"
-    found := nil
-    opts
-      do: [:each |
-        ((each isKindOf: Tuple) and: [
-          (each at: 1) =:= #cacerts
-        ]) ifTrue: [found := each at: 2]
-      ]
+    found := Erlang proplists get_value: #cacerts with: opts
     self deny: found isNil
     self assert: (found size > 0)
 
@@ -210,30 +204,15 @@ TestCase subclass: HTTPClientUtilsTest
 
   testTlsOptionsOmitSniForIpLiteral =>
     opts := HTTPClient tlsOptionsFor: "127.0.0.1"
-    self
-      deny: (opts anySatisfy: [:each |
-        (each isKindOf: Tuple) and: [(each at: 1) =:= #server_name_indication]
-      ])
+    self deny: (Erlang proplists is_defined: #server_name_indication with: opts)
 
   testTlsOptionsCheckHostname =>
     opts := HTTPClient tlsOptionsFor: "example.com"
-    self
-      assert: (opts
-        anySatisfy: [:each |
-          (each isKindOf: Tuple) and: [
-            (each at: 1) =:= #customize_hostname_check
-          ]
-        ])
+    self assert: (Erlang proplists is_defined: #customize_hostname_check with: opts)
 
   testTlsOptionsOfferH2AndHttp11 =>
     opts := HTTPClient tlsOptionsFor: "example.com"
-    offered := nil
-    opts
-      do: [:each |
-        ((each isKindOf: Tuple) and: [
-          (each at: 1) =:= #alpn_advertised_protocols
-        ]) ifTrue: [offered := each at: 2]
-      ]
+    offered := Erlang proplists get_value: #alpn_advertised_protocols with: opts
     self deny: offered isNil
     self assert: offered size equals: 2
     self assert: (offered at: 1) equals: (Binary fromIolist: "h2")
