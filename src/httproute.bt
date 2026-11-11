@@ -24,7 +24,7 @@
 /// )
 /// router := HTTPRouter routes: routes
 /// ```
-sealed Value subclass: HTTPRoute
+sealed typed Value subclass: HTTPRoute
   /// HTTP method (e.g. "GET", "POST").
   field: method :: String = ""
   /// Path pattern (e.g. "/users/:id").

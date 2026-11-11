@@ -9,7 +9,7 @@
 /// `HTTPRouter`, and answers with `sendResp:`, `sendFile:` or a streamed
 /// `streamWith:` block. Behaviour differences from the cowboy server
 /// that 0.2 shipped are listed in the CHANGELOG (0.3.0).
-Object subclass: HttpExchangeAdapter
+typed Object subclass: HttpExchangeAdapter
 
   /// Largest request body read at once (8 MB, as Bandit): `req body`
   /// answers 413 past it, while `req readChunk` streams past it in parts.
@@ -31,7 +31,7 @@ Object subclass: HttpExchangeAdapter
   ///
   /// Decides the handler's shape on every call; `HTTPServer` decides it
   /// once at start and calls `serve:handler:kind:` instead.
-  class serve: ex :: Exchange handler: handler -> Object =>
+  class serve: ex :: Exchange handler: handler :: Object -> Object =>
     self
       serve: ex
       handler: handler
@@ -39,7 +39,7 @@ Object subclass: HttpExchangeAdapter
 
   /// `serve:handler:` with the handler's shape already decided by
   /// `handlerKind:`, so a request does no `isKindOf:` checks on it.
-  class serve: ex :: Exchange handler: handler kind: kind :: Symbol -> Object =>
+  class serve: ex :: Exchange handler: handler :: Object kind: kind :: Symbol -> Object =>
     [
       self
         respond: ex
@@ -67,12 +67,12 @@ Object subclass: HttpExchangeAdapter
   /// The handler's shape: `#block` (a block, `PlugChain`s included),
   /// `#router` (an `HTTPRouter`) or `#actor` (anything answering
   /// `handle:`, an `HTTPHandler` actor).
-  class handlerKind: handler -> Symbol =>
+  class handlerKind: handler :: Object -> Symbol =>
     (handler isKindOf: Block) ifTrue: [^#block]
     (handler isKindOf: HTTPRouter) ifTrue: [^#router]
     #actor
 
-  class respond: ex :: Exchange handler: handler kind: kind :: Symbol -> Object =>
+  class respond: ex :: Exchange handler: handler :: Object kind: kind :: Symbol -> Object =>
     query := QueryParser parse: ex query
     query isNil ifTrue: [^self send400: ex reason: "invalid UTF-8 in query"]
     raw := ex headers
@@ -149,7 +149,7 @@ Object subclass: HttpExchangeAdapter
   /// nothing. An `expect` header keeps the drain, which is where the
   /// engine sends `100 Continue`. HTTP/2 can carry a body without
   /// `content-length`, so it always drains.
-  class mayHaveBody: ex :: Exchange headers: raw -> Boolean =>
+  class mayHaveBody: ex :: Exchange headers: raw :: HttpHeaders -> Boolean =>
     raw
       do: [:t |
         {name, value} := t
@@ -190,8 +190,10 @@ Object subclass: HttpExchangeAdapter
     ]
 
   /// Dispatch to a block, an `HTTPHandler` actor (a real actor send) or
-  /// an `HTTPRouter`.
-  class dispatch: handler kind: kind :: Symbol request: req :: HTTPRequest -> Object =>
+  /// an `HTTPRouter`. `kind` is `handlerKind:`'s verdict on `handler`,
+  /// decided once so a request does no `isKindOf:` checks; the handler is
+  /// `Dynamic` here because the static type cannot follow that verdict.
+  class dispatch: handler :: Dynamic kind: kind :: Symbol request: req :: HTTPRequest -> Object =>
     kind match: [
       #block -> handler value: req;
       #router -> self dispatchRouter: handler request: req;
@@ -232,7 +234,7 @@ Object subclass: HttpExchangeAdapter
   /// them (HTTP/2 values, non-UTF-8 HTTP/1 values). A Binary must be
   /// valid UTF-8: answer nil otherwise so
   /// the caller sends 400 without running the handler.
-  class requestHeaders: headers -> List(List(String)) | Nil =>
+  class requestHeaders: headers :: HttpHeaders -> List(List(String)) | Nil =>
     headers
       collect: [:t |
         {name, value} := t

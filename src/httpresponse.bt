@@ -22,7 +22,7 @@
 /// resp ok          // => true
 /// resp bodyAsJson  // => Result ok: a Dictionary
 /// ```
-sealed Value subclass: HTTPResponse
+sealed typed Value subclass: HTTPResponse
   /// HTTP status code (e.g. 200, 404, 500).
   field: status :: Integer = 0
   /// Response headers as a List of [name, value] binary pairs.

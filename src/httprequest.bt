@@ -26,7 +26,7 @@
 ///   HTTPResponse new: #{ #status => 200, #body => "ok" }
 /// ]
 /// ```
-sealed Value subclass: HTTPRequest
+sealed typed Value subclass: HTTPRequest
   /// HTTP method (e.g. "GET", "POST", "PUT", "DELETE").
   field: method :: String = ""
   /// Request path (e.g. "/api/users").

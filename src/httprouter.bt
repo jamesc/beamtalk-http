@@ -65,7 +65,7 @@
 /// run will silently never be visible inside a handler. If a route needs
 /// live actor state, or state that can change after startup, back it with
 /// an actor implementing `HTTPHandler>>handle:` instead of a route block.
-sealed Value subclass: HTTPRouter
+sealed typed Value subclass: HTTPRouter
   /// Compiled route table: `{method, segments, handler}` tuples (internal).
   field: compiledRoutes :: List(Tuple) = #()
   /// Custom not-found handler (internal).
@@ -122,7 +122,7 @@ sealed Value subclass: HTTPRouter
       }
 
   /// One `HTTPRoute` to its `{method, segments, handler}` tuple.
-  class compileRoute: route -> Tuple =>
+  class compileRoute: route :: Object -> Tuple =>
     (route isKindOf: HTTPRoute) ifFalse: [
       self badRoute: "Each route must be an HTTPRoute"
     ]
@@ -141,7 +141,7 @@ sealed Value subclass: HTTPRouter
   /// A pattern segment to `{kind, text}`: `:name` is a `#param`, `*name`
   /// a `#wildcard` (a bare `:` or `*` stays literal), anything else a
   /// `#literal`.
-  class parseSegment: part :: String -> Tuple =>
+  class parseSegment: part :: String -> Tuple(Symbol, String) =>
     (part size > 1 and: [
       part startsWith: ":"
     ]) ifTrue: [^{#param, part drop: 1}]
@@ -152,7 +152,7 @@ sealed Value subclass: HTTPRouter
 
   /// Reject a wildcard before the last segment and a parameter name used
   /// twice in one pattern.
-  class validate: segments :: List(Tuple) pattern: path :: String -> Nil =>
+  class validate: segments :: List(Tuple(Symbol, String)) pattern: path :: String -> Nil =>
     names := #()
     last := segments size
     i := 0
@@ -189,7 +189,7 @@ sealed Value subclass: HTTPRouter
 
   /// The parameters `pattern` captures from `segs`, or nil when it does
   /// not match.
-  class match: pattern :: List(Tuple) segments: segs :: List(String) -> Dictionary(String, String) | Nil =>
+  class match: pattern :: List(Tuple(Symbol, String)) segments: segs :: List(String) -> Dictionary(String, String) | Nil =>
     params := #{}
     rest := segs
     pattern

@@ -19,11 +19,11 @@
 ///
 /// `terminate:` answers the handler's `onClose:` answer so tests can
 /// observe it; the engine ignores it.
-sealed Value subclass: HttpWebSocketAdapter
+sealed typed Value subclass: HttpWebSocketAdapter
   field: handlerClass :: Dynamic = nil
   field: request :: Object = nil
   field: state :: Dynamic = nil
-  field: ws :: Dynamic = nil
+  field: ws :: WebSocketHandle | Nil = nil
 
   /// A handler for `handlerClass` and the upgrade's `request`. The
   /// handle and first state arrive in `init`, in the connection
@@ -56,22 +56,19 @@ sealed Value subclass: HttpWebSocketAdapter
 
   /// Open the handle's queue for the callback about to run (see
   /// `WebSocketHandle>>queue:`).
-  openQueue -> Object => Erlang erlang put: WebSocketHandle queueKey with: #()
+  openQueue -> Object => ProcessDictionary at: WebSocketHandle queueKey put: #()
 
   /// Close the queue and answer what the callback queued, in order: a
   /// push of its frames, a stop at its first close (with the frames
   /// before it), or a plain ok.
   answerQueued -> WebSocketResult =>
-    queued := Erlang erlang erase: WebSocketHandle queueKey
-    queued match: [
-      q :: List -> nil;
-      _ -> ^WebSocketResult ok: self
-    ]
+    queued := ProcessDictionary erase: WebSocketHandle queueKey
+    (queued isKindOf: List) ifFalse: [^WebSocketResult ok: self]
     queued isEmpty ifTrue: [^WebSocketResult ok: self]
     queued size =:= 1 ifTrue: [^self sendPayload: (queued at: 1)]
     frames := #()
     queued
-      do: [:payload |
+      do: [:payload :: Object |
         result := self sendPayload: payload
         result kind =:= #stop
           ifTrue: [

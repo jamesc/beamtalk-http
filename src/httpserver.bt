@@ -78,15 +78,15 @@ type HttpServerOptions = Dictionary(Symbol, Dynamic)
 /// @see HTTPClient (for making HTTP requests)
 /// @see HTTPRequest (for incoming request objects)
 /// @see HTTPResponse (for building response objects)
-Actor subclass: HTTPServer
+typed Actor subclass: HTTPServer
   state: port :: Integer = 0
-  state: handler = nil
+  state: handler :: HTTPHandlerLike | Nil = nil
   state: bind :: String = "127.0.0.1"
-  state: server = nil
-  // Untyped: `listenerInfo` answers `{ip, port}` with the port as
+  state: server :: ServerSupervisor | Nil = nil
+  // `listenerInfo` answers `{ip, port}` with the port as
   // `Integer | Binary` (Binary only for Unix sockets, which never bind
-  // here); at runtime this is always the Integer port.
-  state: actualPort = 0
+  // here); `initialize` checks it is the Integer port before storing it.
+  state: actualPort :: Integer = 0
 
   /// Start an HTTP server on the given port with a handler block or actor.
   ///
@@ -133,7 +133,7 @@ Actor subclass: HTTPServer
 
   /// Raise a `type_error` unless `handler` is a block, an `HTTPRouter`
   /// or an actor responding to `handle:`.
-  class checkHandler: handler -> Nil =>
+  class checkHandler: handler :: Object -> Nil =>
     ((handler isKindOf: Block) or: [
       (handler isKindOf: HTTPRouter) or: [handler respondsTo: #handle:]
     ])
@@ -146,7 +146,7 @@ Actor subclass: HTTPServer
       ]
     nil
 
-  initialize =>
+  initialize -> Nil =>
     h := self.handler
     // Decided once here, not per request (BT-4466).
     kind := HttpExchangeAdapter handlerKind: h
@@ -157,7 +157,7 @@ Actor subclass: HTTPServer
         #ip => (bound at: 1),
         #inet6 => (bound at: 2),
         #startupLog => false,
-        #handler => [:ex |
+        #handler => [:ex :: Exchange |
           HttpExchangeAdapter
             serve: ex
             handler: h
