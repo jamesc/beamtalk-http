@@ -7,7 +7,7 @@
 /// the engine): the engine hands over the raw query string and this
 /// answers the `Dictionary` behind `HTTPRequest>>queryParams`. Kept as
 /// its own stateless unit so any backend adapter maps the same way.
-Object subclass: QueryParser
+typed Object subclass: QueryParser
 
   /// Raw query string to parameters, with cowboy's `parse_qs` rules (as
   /// beamtalk-http 0.2 parsed them): `?flag`

@@ -18,7 +18,7 @@
 /// ```
 ///
 /// @see Plug (the protocol each element of `plugs` implements)
-sealed Value subclass: PlugChain
+sealed typed Value subclass: PlugChain
 
   /// Compose `plugs` around `handler`, outermost-first.
   class chain: plugs :: List(Plug) handler: handler :: Block(HTTPRequest, HTTPResponse) -> Block(HTTPRequest, HTTPResponse) =>
@@ -38,5 +38,5 @@ sealed Value subclass: PlugChain
           wrapFrom: index + 1
           plugs: plugs
           handler: handler
-        [:req | plug call: req next: rest]
+        [:req :: HTTPRequest | plug call: req next: rest]
       ]

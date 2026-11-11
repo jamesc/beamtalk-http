@@ -16,7 +16,7 @@
 ///
 /// @see Plug (the protocol this implements)
 /// @see PlugChain (composes this with other plugs and a terminal handler)
-Value subclass: RequestLogger
+typed Value subclass: RequestLogger
 
   call: request :: HTTPRequest next: next :: Block(HTTPRequest, HTTPResponse) -> HTTPResponse =>
     response := next value: request
