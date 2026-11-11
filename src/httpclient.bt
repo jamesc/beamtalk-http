@@ -619,7 +619,8 @@ typed Actor subclass: HTTPClient
     fields
 
   /// A header name or value: a String or Binary, else this raises a
-  /// `type_error` naming the whole `pair`.
+  /// `type_error` naming the whole `pair`. One `isKindOf: Binary` test
+  /// covers both, since `String` is a `Binary` subclass.
   class headerField: field :: Object of: pair :: Object -> Binary =>
     (field isKindOf: Binary) ifFalse: [self badHeaderPair: pair]
     field
