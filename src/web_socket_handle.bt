@@ -72,8 +72,8 @@ sealed typed Value subclass: WebSocketHandle
   /// otherwise, where `HttpWebSocketAdapter>>handleInfo:` sends it.
   queue: payload :: Object -> WebSocketHandle =>
     key := WebSocketHandle queueKey
-    (Erlang erlang get: key) match: [
-      queued :: List -> Erlang erlang put: key with: (queued add: payload);
+    (ProcessDictionary at: key) match: [
+      queued :: List -> ProcessDictionary at: key put: (queued add: payload);
       _ -> self pid send: {WebSocketHandle sendTag, payload}
     ]
     self
