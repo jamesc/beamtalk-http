@@ -45,6 +45,18 @@ TestCase subclass: HTTPClientUtilsTest
     self assert: (info at: #host) equals: "::1"
     self assert: (info at: #port) equals: 8080
 
+  testUrlPartsIsTyped =>
+    u := self assertOk: (HTTPClient urlParts: "http://localhost:8080/api?q=1")
+    self assert: u scheme equals: "http"
+    self assert: u host equals: "localhost"
+    self assert: u port equals: 8080
+    self assert: u path equals: "/api?q=1"
+    self assert: u asDictionary equals: (self assertOk: (HTTPClient parseUrl: "http://localhost:8080/api?q=1"))
+
+  testUrlPartsRejectsLikeParseUrl =>
+    self deny: (HTTPClient urlParts: "ftp://example.com/file") isOk
+    self deny: (HTTPClient urlParts: 42) isOk
+
   // ===== parseUrl: — invalid URLs answer Result errors, not raises =====
   testParseFtpSchemeIsError =>
     result := HTTPClient parseUrl: "ftp://example.com/file"

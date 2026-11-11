@@ -1,0 +1,33 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// HTTPClientUrl — the connection parts of an `http(s)` URL, as
+/// `HTTPClient` parses them before connecting.
+///
+/// `HTTPClient parseUrl:` answers the same parts as a Dictionary; the
+/// client itself works from this typed value.
+///
+/// ## Examples
+/// ```beamtalk
+/// u := (HTTPClient urlParts: "http://localhost:8080/api?q=1") unwrap
+/// u port   // => 8080
+/// u path   // => "/api?q=1"
+/// ```
+sealed typed Value subclass: HTTPClientUrl
+  /// `"http"` or `"https"`.
+  field: scheme :: String = "http"
+  /// The host, IPv6 literals unbracketed (`"::1"`).
+  field: host :: String = ""
+  /// The port, defaulting to 80 (`http`) or 443 (`https`).
+  field: port :: Integer = 80
+  /// The origin-form target: the path (`"/"` when empty) plus any query.
+  field: path :: String = "/"
+
+  /// The parts as `HTTPClient parseUrl:` answers them.
+  asDictionary -> Dictionary(Symbol, Object) =>
+    #{
+      #scheme => self.scheme,
+      #host => self.host,
+      #port => self.port,
+      #path => self.path
+    }
