@@ -259,7 +259,7 @@ TestCase subclass: HttpExchangeAdapterTest
 
   testBodyCompleteFalseWhenExchangeLacksIt =>
     // An older Buccaneer has no `bodyComplete`: fall back to draining.
-    self deny: (HttpExchangeAdapter bodyComplete: Object new)
+    self deny: (HttpExchangeAdapter bodyComplete: 42)
 
   testReadBodyHandlerKeepAliveStaysFramed =>
     // Two POSTs on one connection; the handler reads each body, so the
