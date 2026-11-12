@@ -1,15 +1,25 @@
 // Copyright 2026 James Casey
 // SPDX-License-Identifier: Apache-2.0
 
-/// The options `request:url:options:` and `request:path:options:` accept:
-/// Symbol keys with values checked at each use site. See the class-side
-/// `request:url:options:` for one bullet per key.
-type RequestOptions = Dictionary(Symbol, Dynamic)
+/// The options `request:url:options:` and `request:path:options:` accept.
+/// A closed shape: a misspelt key or a wrong value type in a literal is
+/// reported at the call site. Runtime validators (`checkOptions:` and
+/// friends) still guard dynamic callers and value ranges. See the
+/// class-side `request:url:options:` for one bullet per key.
+type RequestOptions = #{
+  ?#headers => List(List(String)),
+  ?#body => String,
+  ?#timeout => Integer,
+  ?#maxBodyBytes => Integer | #unlimited
+}
 
-/// The `spawnWith:` config for a persistent client: Symbol keys with
-/// values checked at each use site. See `## Options` below for one bullet
-/// per key.
-type ClientOptions = Dictionary(Symbol, Dynamic)
+/// The `spawnWith:` config for a persistent client. A closed shape; see
+/// `## Options` below for one bullet per key.
+type ClientOptions = #{
+  ?#baseUrl => String,
+  ?#headers => List(List(String)),
+  ?#timeout => Integer
+}
 
 /// A live Mint connection the client threads through a request: HTTP/1.1
 /// or (over TLS with `h2` negotiated) HTTP/2.
@@ -849,10 +859,11 @@ typed Actor subclass: HTTPClient
     url := (HTTPClient checkUrl: self.baseUrl) ++ (HTTPClient checkUrl: path)
     HTTPClient checkOptions: opts
     defaults := #{#headers => self.headers, #timeout => self.timeout}
+    merged :: RequestOptions := defaults merge: opts
     self
       withConn: method
       url: url
-      options: (defaults merge: opts)
+      options: merged
 
   /// Run one request over the persistent connection, reconnecting when the
   /// stored connection died. A reused connection that drops mid-request
@@ -883,12 +894,13 @@ typed Actor subclass: HTTPClient
     // attempt spent is gone, so a retried request stays bounded by
     // the caller's `#timeout` instead of starting a fresh clock.
     t := HTTPClient checkTimeout: (opts at: #timeout ifAbsent: [self.timeout])
+    retryOpts :: RequestOptions := opts merge: #{
+      #timeout => (HTTPClient remaining: t from: start)
+    }
     retry := HTTPClient
       transact: nil
       method: method
       url: url
-      options: (opts merge: #{
-        #timeout => (HTTPClient remaining: t from: start)
-      })
+      options: retryOpts
     self.conn := retry at: 1
     retry at: 2

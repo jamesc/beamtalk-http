@@ -76,12 +76,15 @@ TestCase subclass: HTTPServerTest
     self assert: outcome isError
 
   testNonStringBindRaises =>
+    // Typed Dynamic: a dynamic caller bypasses the compile-time shape, so
+    // this pins the runtime check (the shape rejects a literal at compile time).
+    badOpts :: Dynamic := #{#bind => 123}
     outcome := Result
       tryDo: [
         HTTPServer
           start: 0
           handler: [:req | HTTPResponse new: #{#status => 200, #body => "ok"}]
-          options: #{#bind => 123}
+          options: badOpts
       ]
     self assert: outcome isError
 
