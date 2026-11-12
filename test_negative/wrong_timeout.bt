@@ -4,5 +4,9 @@
 // Negative fixture (BT-4736): NOT part of the build. `just check-shapes`
 // must see the type checker report the wrong option type below.
 Object subclass: WrongTimeout
+
   class run -> Object =>
-    HTTPClient request: #get url: "http://localhost" options: #{#timeout => "5s"}
+    HTTPClient
+      request: #get
+      url: "http://localhost"
+      options: #{#timeout => "5s"}

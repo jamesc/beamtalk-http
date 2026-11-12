@@ -31,9 +31,7 @@ type HTTPHandlerLike = Block(HTTPRequest, HTTPResponse) | HTTPHandler | HTTPRout
 /// The options `HTTPServer start:handler:options:` accepts. A closed
 /// shape: a misspelt key or wrong value type in a literal is reported at
 /// the call site. See `start:handler:options:` for one bullet per key.
-type HttpServerOptions = #{
-  ?#bind => String
-}
+type HttpServerOptions = #{?#bind => String}
 
 /// HTTPServer — HTTP server actor for Beamtalk, served by Buccaneer.
 ///
