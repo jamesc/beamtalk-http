@@ -281,11 +281,23 @@ typed Object subclass: HttpExchangeAdapter
         ]
         Error signal: ("Request body read failed: " ++ read error printString)
       ]
-    data := read value
+    self bodyValue: read value
+
+  /// A request body as the public `String | Binary` value: a String when
+  /// the bytes are valid UTF-8, the Binary itself otherwise.
+  ///
+  /// `Binary>>asString` costs two `unicode:characters_to_binary/2` passes
+  /// over the bytes (BT-4500: about 52 µs on a 64 KiB body). This does
+  /// one validating pass with `characters_to_binary/1` — it answers the
+  /// binary for valid UTF-8 and an `{error, ...}`/`{incomplete, ...}`
+  /// tuple otherwise — then retags without a second check. An empty body
+  /// skips the FFI call.
+  class bodyValue: data :: Binary -> String | Binary =>
     (data isKindOf: String) ifTrue: [^data]
-    converted := data asString
-    converted isError ifTrue: [^data]
-    converted value
+    data size =:= 0 ifTrue: [^""]
+    checked := (Erlang unicode) characters_to_binary: data
+    (checked isKindOf: Binary) ifFalse: [^data]
+    data asStringUnchecked
 
   /// `HTTPResponse` header pairs to engine tuples.
   class responseHeaders: headers :: List(List(String)) -> List(Tuple) =>

@@ -205,6 +205,89 @@ TestCase subclass: HttpExchangeAdapterTest
     over := (HTTPClient post: self baseUrl ++ "/" body: ("x" repeat: 8000001)) unwrap
     self assert: over status equals: 413
 
+  // BT-4500: `bodyValue:` validates once and keeps `asString` behaviour.
+  testBodyValueEmptyIsEmptyString =>
+    v := HttpExchangeAdapter bodyValue: (Binary fromBytes: #())
+    self assert: (v isKindOf: String)
+    self assert: v equals: ""
+
+  testBodyValueAsciiIsString =>
+    v := HttpExchangeAdapter bodyValue: (Binary fromBytes: #(104, 105))
+    self assert: (v isKindOf: String)
+    self assert: v equals: "hi"
+
+  testBodyValueMultibyteUtf8IsString =>
+    // "é" is C3 A9.
+    v := HttpExchangeAdapter bodyValue: (Binary fromBytes: #(195, 169))
+    self assert: (v isKindOf: String)
+    self assert: v size equals: 1
+
+  testBodyValueInvalidUtf8StaysBinary =>
+    data := Binary fromBytes: #(255, 254)
+    v := HttpExchangeAdapter bodyValue: data
+    self deny: (v isKindOf: String)
+    self assert: v size equals: 2
+
+  testBodyValueTruncatedSequenceStaysBinary =>
+    // "a" then the first byte of a two-byte sequence.
+    v := HttpExchangeAdapter bodyValue: (Binary fromBytes: #(97, 195))
+    self deny: (v isKindOf: String)
+    self assert: v size equals: 2
+
+  testBodyValueSurrogateStaysBinary =>
+    // CESU-style encoded surrogate U+D800 (ED A0 80) is not UTF-8.
+    v := HttpExchangeAdapter bodyValue: (Binary fromBytes: #(237, 160, 128))
+    self deny: (v isKindOf: String)
+
+  testBodyValueLargeValidBodyIsString =>
+    v := HttpExchangeAdapter bodyValue: (Binary fromBytes: ((1 to: 65536) collect: [:i |
+      120
+    ]))
+    self assert: (v isKindOf: String)
+    self assert: v size equals: 65536
+
+  testBodyValueStringPassesThrough =>
+    self assert: (HttpExchangeAdapter bodyValue: "abc") equals: "abc"
+
+  testInvalidUtf8BodyIsBinaryInBlockHandler =>
+    self.srv := self
+      startBuccaneer: [:req |
+        HTTPResponse
+          new: #{
+            #status => 200,
+            #body => ((req body isKindOf: String) ifTrue: [
+              "string"
+            ] ifFalse: ["binary"])
+          }
+      ]
+    raw := self
+      rawPost: self.srv port
+      path: "/bin"
+      headers: "content-length: 2\r\n"
+      body: (Binary fromBytes: #(255, 254))
+    self assert: (raw includesSubstring: "binary")
+
+  testEmptyBodyIsEmptyStringInBlockHandler =>
+    self.srv := self
+      startBuccaneer: [:req |
+        HTTPResponse
+          new: #{
+            #status => 200,
+            #body => ((req body isKindOf: String) ifTrue: [
+              "string:" ++ req body size asString
+            ] ifFalse: ["binary"])
+          }
+      ]
+    resp := (HTTPClient post: self baseUrl ++ "/" body: "") unwrap
+    self assert: resp body equals: "string:0"
+
+  testValidUtf8EchoRoundTrips =>
+    self.srv := self startBuccaneer: [:req |
+      HTTPResponse new: #{#status => 200, #body => req body}
+    ]
+    resp := (HTTPClient post: self baseUrl ++ "/" body: "héllo wörld") unwrap
+    self assert: resp body equals: "héllo wörld"
+
   testNonUtf8BodyStaysBinary =>
     self.srv := self
       startBuccaneer: [:req |

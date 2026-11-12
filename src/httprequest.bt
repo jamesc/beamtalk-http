@@ -114,10 +114,7 @@ sealed typed Value subclass: HTTPRequest
         ]
         Error signal: ("Request body read failed: " ++ read error printString)
       ]
-    data := read value
-    converted := data asString
-    converted isError ifTrue: [^data]
-    converted value
+    HttpExchangeAdapter bodyValue: read value
 
   /// A 1xx informational response while the handler runs (`103 Early
   /// Hints`, ...). Answers `Result error: #not_supported` on HTTP/1.0 —
