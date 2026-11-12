@@ -238,19 +238,17 @@ typed Object subclass: HttpExchangeAdapter
     headers
       collect: [:t |
         {name, value} := t
-        name match: [
-          n :: String -> n;
-          _ -> ^nil
-        ]
-        value match: [
-          v :: String -> #(name, v);
-          b :: Binary -> [
-            converted := b asString
+        (name isKindOf: String) ifFalse: [^nil]
+        // Fast path (BT-4500): a String value, the usual case, skips the
+        // Binary branch and its UTF-8 validation.
+        (value isKindOf: String)
+          ifTrue: [#(name, value)]
+          ifFalse: [
+            (value isKindOf: Binary) ifFalse: [^nil]
+            converted := value asString
             converted isError ifTrue: [^nil]
             #(name, converted value)
-          ] value;
-          _ -> ^nil
-        ]
+          ]
       ]
 
   /// The whole body: a String when valid UTF-8, a Binary otherwise.

@@ -387,6 +387,14 @@ TestCase subclass: HttpExchangeAdapterTest
     mixed := QueryParser parse: "n=%41+%42C+%2f"
     self assert: (mixed at: "n") equals: "A BC /"
 
+  testRequestHeadersConversion =>
+    strings := HttpExchangeAdapter requestHeaders: #({"host", "a"}, {"x", "b"})
+    self assert: strings equals: #(#("host", "a"), #("x", "b"))
+    valid := HttpExchangeAdapter requestHeaders: #({"x", Binary fromBytes: #(104, 105)})
+    self assert: valid equals: #(#("x", "hi"))
+    self assert: (HttpExchangeAdapter requestHeaders: #({"x", Binary fromBytes: #(255, 254)})) isNil
+    self assert: (HttpExchangeAdapter requestHeaders: #({"x", 7})) isNil
+
   testClientDisconnectKeepsServing =>
     self.srv := self startBuccaneer: [:req |
       HTTPResponse new: #{#status => 200, #body => "alive"}
