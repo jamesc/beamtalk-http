@@ -240,7 +240,9 @@ TestCase subclass: HttpExchangeAdapterTest
     self deny: (v isKindOf: String)
 
   testBodyValueLargeValidBodyIsString =>
-    v := HttpExchangeAdapter bodyValue: (Binary fromBytes: ((1 to: 65536) collect: [:i | 120]))
+    v := HttpExchangeAdapter bodyValue: (Binary fromBytes: ((1 to: 65536) collect: [:i |
+      120
+    ]))
     self assert: (v isKindOf: String)
     self assert: v size equals: 65536
 
