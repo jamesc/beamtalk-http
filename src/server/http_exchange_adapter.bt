@@ -123,9 +123,11 @@ typed Object subclass: HttpExchangeAdapter
       ]
     stream := resp stream
     stream notNil ifTrue: [^self runStream: ex block: stream]
-    drain
+    // BT-4500: an exchange whose body was already read to its end (the
+    // handler called `req body`) has nothing left to drain.
+    (drain and: [(self bodyComplete: ex) not])
       ifTrue: [
-        drained := self readBody: ex
+        drained := self readRaw: ex
         drained isNil ifTrue: [^nil]
       ]
     file := resp file
@@ -142,6 +144,15 @@ typed Object subclass: HttpExchangeAdapter
       sendResp: resp status
       headers: (self responseHeaders: resp headers)
       body: resp body
+
+  /// Whether the exchange's request body was read to its end (or there was
+  /// none): `Exchange>>bodyComplete`, a local-state read (Buccaneer after
+  /// #39). An older Buccaneer without it answers false, so the caller
+  /// falls back to the drain. `ex` is `Dynamic` because the static
+  /// `Exchange` of an older Buccaneer has no such selector.
+  class bodyComplete: ex :: Dynamic -> Boolean =>
+    (ex respondsTo: #bodyComplete) ifFalse: [^false]
+    ex bodyComplete =:= true
 
   /// Whether the request may still have an unread body. On HTTP/1 a
   /// request with no `content-length` (or `content-length: 0`) and no
@@ -252,13 +263,22 @@ typed Object subclass: HttpExchangeAdapter
       ]
 
   /// The whole body: a String when valid UTF-8, a Binary otherwise.
-  /// Before dispatch (actor handlers) and after it (draining an unread body before a
-  /// plain or file response). Answers nil after sending 400 (malformed
-  /// framing — the engine raises `HTTPError` for those, documented
-  /// there as "a 400") or 413 (over-large body). A dead socket signals
-  /// `TransportError` so the engine takes its quiet transport-error path
-  /// instead of a 500; anything else raises.
+  /// Before dispatch (actor handlers). Answers nil after sending 400 or
+  /// 413 (see `readRaw:`).
   class readBody: ex :: Exchange -> String | Binary | Nil =>
+    raw := self readRaw: ex
+    raw isNil ifTrue: [^nil]
+    self bodyValue: raw
+
+  /// The rest of the body as the raw bytes, with no UTF-8 check: the
+  /// post-handler drain of an unread body before a plain or file
+  /// response, where the bytes are discarded (BT-4500: `bodyValue:` runs
+  /// once per request, on the body the handler sees). Answers nil after
+  /// sending 400 (malformed framing — the engine raises `HTTPError` for
+  /// those, documented there as "a 400") or 413 (over-large body). A
+  /// dead socket signals `TransportError` so the engine takes its quiet
+  /// transport-error path instead of a 500; anything else raises.
+  class readRaw: ex :: Exchange -> Binary | Nil =>
     read := [ex readAll: self maxBodyBytes]
       on: HTTPError
       do: [:e |
@@ -281,7 +301,7 @@ typed Object subclass: HttpExchangeAdapter
         ]
         Error signal: ("Request body read failed: " ++ read error printString)
       ]
-    self bodyValue: read value
+    read value
 
   /// A request body as the public `String | Binary` value: a String when
   /// the bytes are valid UTF-8, the Binary itself otherwise.
@@ -291,9 +311,10 @@ typed Object subclass: HttpExchangeAdapter
   /// one validating pass with `characters_to_binary/1` — it answers the
   /// binary for valid UTF-8 and an `{error, ...}`/`{incomplete, ...}`
   /// tuple otherwise — then retags without a second check. An empty body
-  /// skips the FFI call.
+  /// skips the FFI call. A String passes through: the FFI check accepts
+  /// it and `asStringUnchecked` answers it unchanged, so it needs no
+  /// `isKindOf:` test of its own.
   class bodyValue: data :: Binary -> String | Binary =>
-    (data isKindOf: String) ifTrue: [^data]
     data size =:= 0 ifTrue: [^""]
     checked := (Erlang unicode) characters_to_binary: data
     (checked isKindOf: Binary) ifFalse: [^data]

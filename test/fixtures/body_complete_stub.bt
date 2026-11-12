@@ -1,0 +1,9 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// A stand-in for an `Exchange` that answers `bodyComplete` (BT-4500), so
+/// the adapter's drain decision can be tested without a socket.
+Value subclass: BodyCompleteStub
+  field: complete :: Boolean = false
+
+  bodyComplete -> Boolean => self.complete

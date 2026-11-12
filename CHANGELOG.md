@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Server: fewer per-request costs on body-reading handlers (BT-4500)
+
+The Buccaneer adapter skips its post-handler body drain when the exchange
+reports `bodyComplete` (Buccaneer after #39; an older Buccaneer keeps the
+drain), and the drain no longer runs the UTF-8 check on bytes it discards.
+Behaviour and API are unchanged.
+
 ### HTTPClient runs on Mint; gun is removed
 
 `HTTPClient` now performs requests through
