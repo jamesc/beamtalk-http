@@ -249,18 +249,28 @@ typed Object subclass: HttpExchangeAdapter
     headers
       collect: [:t |
         {name, value} := t
-        (name isKindOf: String) ifFalse: [^nil]
-        // Fast path (BT-4500): a String value, the usual case, skips the
-        // Binary branch and its UTF-8 validation.
-        (value isKindOf: String)
-          ifTrue: [#(name, value)]
-          ifFalse: [
-            (value isKindOf: Binary) ifFalse: [^nil]
-            converted := value asString
-            converted isError ifTrue: [^nil]
-            #(name, converted value)
-          ]
+        // Type-pattern `match:` compiles to an inline tag test; `isKindOf:`
+        // on a built-in goes through a runtime lookup (BT-4500).
+        name match: [
+          n :: String -> n;
+          _ -> ^nil
+        ]
+        // Fast path: a String value, the usual case, skips the Binary
+        // branch and its UTF-8 validation. A String also matches Binary,
+        // so it comes first.
+        value match: [
+          v :: String -> #(name, v);
+          b :: Binary -> self binaryHeaderPair: name value: b;
+          _ -> ^nil
+        ]
       ]
+
+  /// A header pair for a Binary value: the value as a String, or nil when
+  /// it is not valid UTF-8 (the caller sends 400).
+  class binaryHeaderPair: name :: String value: b :: Binary -> List(String) | Nil =>
+    converted := b asString
+    converted isError ifTrue: [^nil]
+    #(name, converted value)
 
   /// The whole body: a String when valid UTF-8, a Binary otherwise.
   /// Before dispatch (actor handlers). Answers nil after sending 400 or
@@ -317,8 +327,10 @@ typed Object subclass: HttpExchangeAdapter
   class bodyValue: data :: Binary -> String | Binary =>
     data size =:= 0 ifTrue: [^""]
     checked := (Erlang unicode) characters_to_binary: data
-    (checked isKindOf: Binary) ifFalse: [^data]
-    data asStringUnchecked
+    checked match: [
+      c :: Binary -> c asStringUnchecked;
+      _ -> data
+    ]
 
   /// `HTTPResponse` header pairs to engine tuples.
   class responseHeaders: headers :: List(List(String)) -> List(Tuple) =>
