@@ -260,17 +260,14 @@ typed Object subclass: HttpExchangeAdapter
         // so it comes first.
         value match: [
           v :: String -> #(name, v);
-          b :: Binary -> self binaryHeaderPair: name value: b;
+          b :: Binary -> [
+            converted := b asString
+            converted isError ifTrue: [^nil]
+            #(name, converted value)
+          ] value;
           _ -> ^nil
         ]
       ]
-
-  /// A header pair for a Binary value: the value as a String, or nil when
-  /// it is not valid UTF-8 (the caller sends 400).
-  class binaryHeaderPair: name :: String value: b :: Binary -> List(String) | Nil =>
-    converted := b asString
-    converted isError ifTrue: [^nil]
-    #(name, converted value)
 
   /// The whole body: a String when valid UTF-8, a Binary otherwise.
   /// Before dispatch (actor handlers). Answers nil after sending 400 or
