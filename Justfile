@@ -50,3 +50,14 @@ release:
 # Push release tags to origin
 publish:
     git push origin --tags
+
+# Option shapes reject a wrong option type at a call site (BT-4736)
+check-shapes:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    out=$(beamtalk lint test_negative/wrong_timeout.bt 2>&1); status=$?
+    echo "$out"
+    if [ $status -eq 0 ] || ! echo "$out" | grep -qi "timeout"; then
+        echo "expected a diagnostic for #timeout => \"5s\"" >&2
+        exit 1
+    fi
