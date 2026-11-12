@@ -249,6 +249,69 @@ TestCase subclass: HttpExchangeAdapterTest
   testBodyValueStringPassesThrough =>
     self assert: (HttpExchangeAdapter bodyValue: "abc") equals: "abc"
 
+  // BT-4500: the post-handler drain is skipped for a body already read to
+  // its end, and kept for everything else.
+  testBodyCompleteTrueSkipsDrain =>
+    self assert: (HttpExchangeAdapter bodyComplete: (BodyCompleteStub complete: true))
+
+  testBodyCompleteFalseKeepsDrain =>
+    self deny: (HttpExchangeAdapter bodyComplete: (BodyCompleteStub complete: false))
+
+  testBodyCompleteFalseWhenExchangeLacksIt =>
+    // An older Buccaneer has no `bodyComplete`: fall back to draining.
+    self deny: (HttpExchangeAdapter bodyComplete: 42)
+
+  testReadBodyHandlerKeepAliveStaysFramed =>
+    // Two POSTs on one connection; the handler reads each body, so the
+    // adapter skips the drain. The second request must still parse.
+    self.srv := self
+      startBuccaneer: [:req |
+        HTTPResponse new: #{
+          #status => 200,
+          #body => "echo:" ++ req body asStringUnchecked
+        }
+      ]
+    raw := self pipelined: "POST /a HTTP/1.1\r\nhost: x\r\ncontent-length: 3\r\n\r\nabcPOST /b HTTP/1.1\r\nhost: x\r\ncontent-length: 3\r\nconnection: close\r\n\r\nxyz" until: "echo:xyz"
+    self assert: (raw includesSubstring: "echo:abc")
+    self assert: (raw includesSubstring: "echo:xyz")
+    self deny: (raw includesSubstring: "400")
+
+  testFullyReadChunkedBodyKeepAliveStaysFramed =>
+    // A chunked body read to its end by the handler skips the drain; the
+    // next pipelined request must still parse.
+    self.srv := self
+      startBuccaneer: [:req |
+        HTTPResponse new: #{
+          #status => 200,
+          #body => "echo:" ++ req body asStringUnchecked
+        }
+      ]
+    raw := self pipelined: "POST /a HTTP/1.1\r\nhost: x\r\ntransfer-encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\nPOST /b HTTP/1.1\r\nhost: x\r\ncontent-length: 3\r\nconnection: close\r\n\r\nxyz" until: "echo:xyz"
+    self assert: (raw includesSubstring: "echo:hello")
+    self assert: (raw includesSubstring: "echo:xyz")
+    self deny: (raw includesSubstring: "400")
+
+  testPartlyReadBodyIsStillDrained =>
+    // The handler reads one chunk and stops: the rest is drained, so it
+    // cannot be parsed as the next request.
+    self.srv := self
+      startBuccaneer: [:req |
+        req readChunk
+        HTTPResponse new: #{#status => 200, #body => "at " ++ req path}
+      ]
+    raw := self pipelined: "POST /a HTTP/1.1\r\nhost: x\r\ncontent-length: 18\r\n\r\nGET /evil HTTP/1.1GET /b HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n" until: "at /b"
+    self assert: (raw includesSubstring: "at /a")
+    self assert: (raw includesSubstring: "at /b")
+    self deny: (raw includesSubstring: "/evil")
+
+  testLargeEchoRoundTrips =>
+    // A 64 KiB echo through a block handler.
+    self.srv := self startBuccaneer: [:req |
+      HTTPResponse new: #{#status => 200, #body => req body}
+    ]
+    resp := (HTTPClient post: self baseUrl ++ "/" body: ("y" repeat: 65536)) unwrap
+    self assert: resp body size equals: 65536
+
   testInvalidUtf8BodyIsBinaryInBlockHandler =>
     self.srv := self
       startBuccaneer: [:req |
