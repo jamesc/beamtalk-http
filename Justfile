@@ -55,9 +55,11 @@ publish:
 check-shapes:
     #!/usr/bin/env bash
     set -uo pipefail
-    out=$(beamtalk lint test_negative/wrong_timeout.bt 2>&1); status=$?
+    # The checker reports a type mismatch as a warning, so lint exits 0:
+    # assert on the diagnostic text, not the exit code.
+    out=$(beamtalk lint test_negative/wrong_timeout.bt 2>&1)
     echo "$out"
-    if [ $status -eq 0 ] || ! echo "$out" | grep -qi "timeout"; then
+    if ! echo "$out" | grep -q "expects RequestOptions"; then
         echo "expected a diagnostic for #timeout => \"5s\"" >&2
         exit 1
     fi
