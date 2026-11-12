@@ -76,7 +76,7 @@ TestCase subclass: WebSocketAdapterTest
 
   testHandleOutsideCallbackMails =>
     ws := WebSocketHandle for: Pid current
-    ws sendText: "later"
+    _ := ws sendText: "later"
     self assert: (self mailed: {#wsSend, {#text, "later"}}) equals: true
 
   testHandleInfoSendPushes =>

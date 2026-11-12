@@ -12,15 +12,15 @@ sealed typed Value subclass: WsEchoHandler
     self new withOpened: true
 
   onText: text :: String ws: ws :: WebSocketHandle -> WsEchoHandler =>
-    ws sendText: text
+    _ := ws sendText: text
     self withTexts: self texts + 1
 
   onBinary: data :: Binary ws: ws :: WebSocketHandle -> WsEchoHandler =>
-    ws sendBinary: data
+    _ := ws sendBinary: data
     self
 
   onInfo: _message :: Object ws: ws :: WebSocketHandle -> WsEchoHandler =>
-    ws sendText: "info"
+    _ := ws sendText: "info"
     self
 
   onClose: reason :: Object -> Object =>

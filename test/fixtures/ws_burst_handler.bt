@@ -10,10 +10,10 @@ sealed typed Value subclass: WsBurstHandler
     self new
 
   onText: text :: String ws: ws :: WebSocketHandle -> WsBurstHandler =>
-    ws sendText: text
+    _ := ws sendText: text
     text =:= "bye"
       ifTrue: [
-        ws close: 4001
+        _ := ws close: 4001
         ws sendText: "dropped"
       ]
       ifFalse: [ws sendText: "again"]
