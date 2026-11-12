@@ -276,6 +276,21 @@ TestCase subclass: HttpExchangeAdapterTest
     self assert: (raw includesSubstring: "echo:xyz")
     self deny: (raw includesSubstring: "400")
 
+  testFullyReadChunkedBodyKeepAliveStaysFramed =>
+    // A chunked body read to its end by the handler skips the drain; the
+    // next pipelined request must still parse.
+    self.srv := self
+      startBuccaneer: [:req |
+        HTTPResponse new: #{
+          #status => 200,
+          #body => "echo:" ++ req body asStringUnchecked
+        }
+      ]
+    raw := self pipelined: "POST /a HTTP/1.1\r\nhost: x\r\ntransfer-encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\nPOST /b HTTP/1.1\r\nhost: x\r\ncontent-length: 3\r\nconnection: close\r\n\r\nxyz" until: "echo:xyz"
+    self assert: (raw includesSubstring: "echo:hello")
+    self assert: (raw includesSubstring: "echo:xyz")
+    self deny: (raw includesSubstring: "400")
+
   testPartlyReadBodyIsStillDrained =>
     // The handler reads one chunk and stops: the rest is drained, so it
     // cannot be parsed as the next request.
