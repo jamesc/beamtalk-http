@@ -7,5 +7,5 @@ version = "0.3.3"
 description = "HTTP client and server for Beamtalk"
 
 [dependencies]
-buccaneer = "0.1.4"
+buccaneer = "0.1.5"
 mint = "0.2.1"

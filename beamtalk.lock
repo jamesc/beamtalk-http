@@ -3,11 +3,11 @@
 
 [[package]]
 name = "buccaneer"
-version = "0.1.4"
+version = "0.1.5"
 registry = "https://github.com/jamesc/beamtalk-registry"
 url = "https://github.com/jamesc/beamtalk-buccaneer.git"
-reference = "tag:v0.1.4"
-sha = "1656d9b4e9dc590e20f521c2e1edf3c451723bb2"
+reference = "tag:v0.1.5"
+sha = "c9fa8c9c7e2ffa0b885369fd94dd58112158bde8"
 
 [[package]]
 name = "catalina"
