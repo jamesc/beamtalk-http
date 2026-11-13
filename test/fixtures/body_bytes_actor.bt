@@ -8,10 +8,10 @@ Actor subclass: BodyBytesActor
 
   handle: req :: HTTPRequest -> HTTPResponse =>
     bytes := req bodyBytes
-    sum := ((Erlang erlang) binary_to_list: bytes) inject: 0 into: [:a :b |
-      a + b
-    ]
+    // Count the byte list: a String-tagged Binary's `size` is graphemes.
+    list := bytes toBytes
+    sum := list inject: 0 into: [:a :b | a + b]
     HTTPResponse new: #{
       #status => 200,
-      #body => bytes size asString ++ ":" ++ sum asString
+      #body => list size asString ++ ":" ++ sum asString
     }

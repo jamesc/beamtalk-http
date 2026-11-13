@@ -373,10 +373,10 @@ TestCase subclass: HttpExchangeAdapterTest
 
   /// "size:sum" of a body's bytes: enough to tell byte sequences apart.
   bytesSummary: bytes :: Binary -> String =>
-    sum := ((Erlang erlang) binary_to_list: bytes) inject: 0 into: [:a :b |
-      a + b
-    ]
-    bytes size asString ++ ":" ++ sum asString
+    // Count the byte list: a String-tagged Binary's `size` is graphemes.
+    list := bytes toBytes
+    sum := list inject: 0 into: [:a :b | a + b]
+    list size asString ++ ":" ++ sum asString
 
   /// A block handler answering the summary of `bodyBytes`.
   bytesHandler =>
