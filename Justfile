@@ -28,8 +28,8 @@ lint:
 clean:
     rm -rf _build
 
-# Full CI check (fmt + lint + build + test)
-ci: fmt lint build test
+# Full CI check (fmt + lint + build + test + check-shapes)
+ci: fmt lint build test check-shapes
 
 # Client load bench (BT-4546): every row, interleaved rounds (bench/README.md)
 bench *ARGS:
