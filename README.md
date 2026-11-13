@@ -127,6 +127,14 @@ done := false
 ```
 
 `req body` stays and reads the rest (bounded by 8 MB, 413 past it).
+
+`req body` answers a String when the bytes are valid UTF-8 and a Binary
+otherwise, so it checks every byte. A handler that only forwards, stores
+or hashes the body (an echo, a binary upload) can call `req bodyBytes`
+instead: the raw Binary, with no UTF-8 check and no String retagging. It
+reads the same way as `body` (lazily from the connection, or the buffered
+body for actors and `withBody:` copies, same 8 MB cap), and the two share
+one read, so calling both, in either order, never reads the socket twice.
 `req inform: 103 headers: h` sends an interim response (`Result error:
 #not_supported` on HTTP/1.0); `100 Continue` goes out automatically on
 the first body read. `HTTPHandler` actors get the whole body read

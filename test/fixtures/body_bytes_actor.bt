@@ -1,0 +1,17 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// Test actor: answers the raw request bytes as "size:sum", proving
+/// `HTTPRequest bodyBytes` works off the connection process, where the
+/// whole body was already read before dispatch.
+Actor subclass: BodyBytesActor
+
+  handle: req :: HTTPRequest -> HTTPResponse =>
+    bytes := req bodyBytes
+    sum := ((Erlang erlang) binary_to_list: bytes) inject: 0 into: [:a :b |
+      a + b
+    ]
+    HTTPResponse new: #{
+      #status => 200,
+      #body => bytes size asString ++ ":" ++ sum asString
+    }
