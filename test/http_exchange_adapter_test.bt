@@ -369,6 +369,114 @@ TestCase subclass: HttpExchangeAdapterTest
       body: (Binary fromBytes: #(255, 254))
     self assert: (raw includesSubstring: "binary")
 
+  // BT-4500: `bodyBytes` answers the raw bytes with no UTF-8 check.
+
+  /// "size:sum" of a body's bytes: enough to tell byte sequences apart.
+  bytesSummary: bytes :: Binary -> String =>
+    // Count the byte list: a String-tagged Binary's `size` is graphemes.
+    list := bytes toBytes
+    sum := list inject: 0 into: [:a :b | a + b]
+    list size asString ++ ":" ++ sum asString
+
+  /// A block handler answering the summary of `bodyBytes`.
+  bytesHandler =>
+    [:req |
+      HTTPResponse new: #{
+        #status => 200,
+        #body => self bytesSummary: req bodyBytes
+      }
+    ]
+
+  postInvalid: path =>
+    self
+      rawPost: self.srv port
+      path: path
+      headers: "content-length: 2\r\n"
+      body: (Binary fromBytes: #(255, 254))
+
+  testBodyBytesValidUtf8 =>
+    self.srv := self startBuccaneer: self bytesHandler
+    resp := (HTTPClient post: self baseUrl ++ "/" body: "héllo") unwrap
+    self assert: resp body equals: "6:795"
+
+  testBodyBytesInvalidUtf8 =>
+    self.srv := self startBuccaneer: self bytesHandler
+    self assert: ((self postInvalid: "/bin") includesSubstring: "2:509")
+
+  testBodyBytesEmptyBody =>
+    self.srv := self startBuccaneer: self bytesHandler
+    resp := (HTTPClient post: self baseUrl ++ "/" body: "") unwrap
+    self assert: resp body equals: "0:0"
+
+  testBodyBytesThenBody =>
+    self.srv := self
+      startBuccaneer: [:req |
+        bytes := req bodyBytes
+        text := req body
+        HTTPResponse
+          new: #{
+            #status => 200,
+            #body => (self bytesSummary: bytes) ++ "|" ++ text asStringUnchecked
+          }
+      ]
+    resp := (HTTPClient post: self baseUrl ++ "/" body: "abc") unwrap
+    self assert: resp body equals: "3:294|abc"
+
+  testBodyThenBodyBytes =>
+    self.srv := self
+      startBuccaneer: [:req |
+        text := req body
+        bytes := req bodyBytes
+        HTTPResponse
+          new: #{
+            #status => 200,
+            #body => text asStringUnchecked ++ "|" ++ (self bytesSummary: bytes)
+          }
+      ]
+    resp := (HTTPClient post: self baseUrl ++ "/" body: "abc") unwrap
+    self assert: resp body equals: "abc|3:294"
+
+  testInvalidBodyBytesThenBodyStaysBinary =>
+    self.srv := self
+      startBuccaneer: [:req |
+        bytes := req bodyBytes
+        kind := (req body isKindOf: String) ifTrue: [
+          "string"
+        ] ifFalse: ["binary"]
+        HTTPResponse new: #{
+          #status => 200,
+          #body => (self bytesSummary: bytes) ++ "|" ++ kind
+        }
+      ]
+    self assert: ((self postInvalid: "/bin") includesSubstring: "2:509|binary")
+
+  testBodyBytesInActorHandler =>
+    self.srv := self startBuccaneer: BodyBytesActor spawn
+    resp := (HTTPClient post: self baseUrl ++ "/" body: "abc") unwrap
+    self assert: resp body equals: "3:294"
+    self assert: ((self postInvalid: "/bin") includesSubstring: "2:509")
+
+  testBodyBytesInRouterHandler =>
+    router := HTTPRouter routes: #(HTTPRoute post: "/up" handler: self bytesHandler)
+    self.srv := self startBuccaneer: router
+    resp := (HTTPClient post: self baseUrl ++ "/up" body: "abc") unwrap
+    self assert: resp body equals: "3:294"
+    self assert: ((self postInvalid: "/up") includesSubstring: "2:509")
+
+  testBodyBytesLargeEchoRoundTrips =>
+    // 64 KiB echoed as raw bytes, never validated.
+    self.srv := self startBuccaneer: [:req |
+      HTTPResponse new: #{#status => 200, #body => req bodyBytes}
+    ]
+    resp := (HTTPClient post: self baseUrl ++ "/" body: ("y" repeat: 65536)) unwrap
+    self assert: resp body size equals: 65536
+    self assert: resp body equals: ("y" repeat: 65536)
+
+  testBodyBytesWithoutExchangeAnswersBufferedBytes =>
+    self assert: (self bytesSummary: HTTPRequest new bodyBytes) equals: "0:0"
+    self assert: (self bytesSummary: (HTTPRequest new withBody: "héllo") bodyBytes) equals: "6:795"
+    self assert: (self bytesSummary: (HTTPRequest new withBody: (Binary fromBytes: #(255, 254))) bodyBytes) equals: "2:509"
+
   testRaiseBecomes500 =>
     self.srv := self startBuccaneer: [:req | Error signal: "boom"]
     resp := (HTTPClient get: self baseUrl ++ "/") unwrap

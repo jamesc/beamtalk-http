@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### HTTPRequest bodyBytes: the raw body, no UTF-8 check (BT-4500)
+
+`HTTPRequest bodyBytes -> Binary` answers the request body as raw bytes.
+`body` must validate all of it to decide String or Binary (about 50 µs on
+a 64 KiB body); a handler that only forwards or stores the bytes can skip
+that cost. It reads like `body` (lazily from the exchange in the connection
+process, the buffered body otherwise; a `withBody:` String answers its
+bytes), and the two share one read per request. `body` itself is unchanged
+apart from that: a second `body` call on a live exchange now answers the
+same bytes instead of the empty remainder.
+
 ### Server: fewer per-request costs on body-reading handlers (BT-4500)
 
 The Buccaneer adapter skips its post-handler body drain when the exchange
