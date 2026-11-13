@@ -126,16 +126,12 @@ sealed typed Value subclass: HTTPRequest
     ex isNil ifTrue: [^self bufferedBytes]
     owned := Pid current =:= ex owner
     owned ifFalse: [^self bufferedBytes]
-    buffered := self bufferedBytes
-    buffered size =:= 0 ifFalse: [^buffered]
+    self.body isEmpty ifFalse: [^self bufferedBytes]
     self liveBytes: ex
 
-  /// The buffered body field as bytes.
-  bufferedBytes -> Binary =>
-    self.body match: [
-      s :: String -> s asBinary;
-      b :: Binary -> b
-    ]
+  /// The buffered body field as bytes. A String is a sealed Binary
+  /// subclass over the same UTF-8 bytes, so it answers as is.
+  bufferedBytes -> Binary => self.body
 
   /// The rest of the body from the live exchange, read at most once per
   /// request: the bytes are kept in the connection process's dictionary
