@@ -3,9 +3,9 @@
 
 [package]
 name = "http"
-version = "0.3.4"
+version = "0.3.5"
 description = "HTTP client and server for Beamtalk"
 
 [dependencies]
-buccaneer = "0.1.5"
+buccaneer = "0.1.6"
 mint = "0.2.1"
