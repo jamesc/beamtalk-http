@@ -114,7 +114,7 @@ sealed typed Value subclass: HTTPResponse
   /// resp ok   // => true   (for status 200)
   /// resp ok   // => false  (for status 404)
   /// ```
-  sealed ok -> Boolean => (self.status >= 200) and: [self.status <= 299]
+  ok -> Boolean => (self.status >= 200) and: [self.status <= 299]
 
   /// Parse the response body as JSON.
   ///
@@ -126,7 +126,7 @@ sealed typed Value subclass: HTTPResponse
   /// ```beamtalk
   /// json := resp bodyAsJson unwrap   // => a Dictionary or List
   /// ```
-  sealed bodyAsJson -> Result(JsonValue, Error) =>
+  bodyAsJson -> Result(JsonValue, Error) =>
     (self.body isKindOf: String) ifTrue: [
       Json parse: self.body
     ] ifFalse: [
