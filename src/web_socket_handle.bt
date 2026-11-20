@@ -29,13 +29,13 @@ sealed typed Value subclass: WebSocketHandle
   /// ## Arguments
   /// - `pid` (Pid) — the connection process, which must be the
   ///   caller; anything else raises `#not_owner` on use.
-  class sealed for: pid :: Pid -> WebSocketHandle => self new withPid: pid
+  class for: pid :: Pid -> WebSocketHandle => self new withPid: pid
 
   /// The tag of handle-to-connection messages (reserved).
-  class sealed sendTag -> Symbol => #wsSend
+  class sendTag -> Symbol => #wsSend
 
   /// The process dictionary key of the adapter's open queue (reserved).
-  class sealed queueKey -> Symbol => #beamtalkHttpWsQueue
+  class queueKey -> Symbol => #beamtalkHttpWsQueue
 
   /// Queue a text frame. Answers the handle, so sends chain.
   ///
