@@ -3,19 +3,19 @@
 
 [[package]]
 name = "buccaneer"
-version = "0.1.6"
+version = "0.1.7"
 registry = "https://github.com/jamesc/beamtalk-registry"
 url = "https://github.com/jamesc/beamtalk-buccaneer.git"
-reference = "tag:v0.1.6"
-sha = "dabf678af8825d0e376b5b2c9012766bb59e72b9"
+reference = "tag:v0.1.7"
+sha = "6acfc24baba900ebd00b3c5673053d11cdc6a7a2"
 
 [[package]]
 name = "catalina"
-version = "0.2.6"
+version = "0.2.7"
 registry = "https://github.com/jamesc/beamtalk-registry"
 url = "https://github.com/jamesc/beamtalk-catalina.git"
-reference = "tag:v0.2.6"
-sha = "c5f20f9dd6bbaaa0471e81cc55fd9fca5da4da36"
+reference = "tag:v0.2.7"
+sha = "78fa5fb38ff3f768aad2f5e715db0bbfaa464aa3"
 
 [[package]]
 name = "hpack"
