@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// QueryParser percent-decoding on malformed and truncated input (BT-5223).
-/// Every case here goes through the binary pattern in `percentRun:into:`.
+/// Decoding goes through the binary pattern in `percentRun:into:`.
 TestCase subclass: QueryParserTest
 
   testDecodesUpperAndLowerHex =>
@@ -10,6 +10,14 @@ TestCase subclass: QueryParserTest
 
   testDecodesMultiByteUtf8 =>
     self assert: ((QueryParser parse: "n=%C3%A9") at: "n") equals: "é"
+
+  testLiteralTextAroundGroups =>
+    self assert: ((QueryParser parse: "n=a%41b%42c") at: "n") equals: "aAbBc"
+    self assert: ((QueryParser parse: "n=%41") at: "n") equals: "A"
+    self assert: ((QueryParser parse: "n=x%41%42%43%44%45%46y") at: "n") equals: "xABCDEFy"
+
+  testPlusAndEncodedPlus =>
+    self assert: ((QueryParser parse: "n=a+b%2Bc%20d") at: "n") equals: "a b+c d"
 
   testTruncatedGroupIsNil =>
     self assert: (QueryParser parse: "n=%") isNil
@@ -45,7 +53,7 @@ TestCase subclass: QueryParserTest
     self assert: ((QueryParser parse: "%41=1") at: "A") equals: "1"
     self assert: (QueryParser parse: "%4=1") isNil
 
-  testNibbleRejectsNonSingleByte =>
+  testNibbleRejectsEmptyMultiCharAndNonAscii =>
     self assert: (QueryParser nibble: "") isNil
     self assert: (QueryParser nibble: "ab") isNil
     self assert: (QueryParser nibble: "é") isNil
