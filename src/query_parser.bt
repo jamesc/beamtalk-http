@@ -60,16 +60,31 @@ typed Object subclass: QueryParser
     self percentRun: s into: #()
 
   class percentRun: rest :: String into: bytes :: List(Integer) -> Tuple(List(Integer), String) | Nil =>
-    ((rest size >= 3) and: [
-      (rest at: 1) =:= "%"
-    ]) ifFalse: [^bytes isEmpty ifTrue: [nil] ifFalse: [{bytes, rest}]]
-    hi := self nibble: (rest at: 2)
-    lo := self nibble: (rest at: 3)
-    (hi isNil or: [lo isNil]) ifTrue: [^nil]
-    self percentRun: (rest drop: 3) into: (bytes add: hi * 16 + lo)
+    rest match: [
+      <<37:8, hi:8, lo:8, tail/binary>> -> self
+        percentGroup: hi
+        low: lo
+        tail: tail
+        into: bytes;
+      _ -> bytes isEmpty ifTrue: [nil] ifFalse: [{bytes, rest}]
+    ]
 
+  /// One `%hl` group already split off: its decoded byte joins `bytes`
+  /// and the run continues in `tail`; nil on a non-hex digit.
+  class percentGroup: hi :: Integer low: lo :: Integer tail: tail :: Binary into: bytes :: List(Integer) -> Tuple(List(Integer), String) | Nil =>
+    h := self hexValue: hi
+    l := self hexValue: lo
+    (h isNil or: [l isNil]) ifTrue: [^nil]
+    self percentRun: tail asStringUnchecked into: (bytes add: h * 16 + l)
+
+  /// The value of one hex digit given as its ASCII byte, nil otherwise.
+  class hexValue: byte :: Integer -> Integer | Nil =>
+    (byte >= 48 and: [byte <= 57]) ifTrue: [^byte - 48]
+    (byte >= 65 and: [byte <= 70]) ifTrue: [^byte - 55]
+    (byte >= 97 and: [byte <= 102]) ifTrue: [^byte - 87]
+    nil
+
+  /// `hexValue:` for a one-character String.
   class nibble: ch :: String -> Integer | Nil =>
-    pos := "0123456789ABCDEFabcdef" indexOf: ch
-    pos isNil ifTrue: [^nil]
-    pos <= 16 ifTrue: [^pos - 1]
-    pos - 7
+    ch size =:= 1 ifFalse: [^nil]
+    self hexValue: ch toBytes first
