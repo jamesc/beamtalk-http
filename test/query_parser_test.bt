@@ -1,0 +1,59 @@
+// Copyright 2026 James Casey
+// SPDX-License-Identifier: Apache-2.0
+
+/// QueryParser percent-decoding on malformed and truncated input (BT-5223).
+/// Decoding goes through the binary pattern in `percentRun:into:`.
+TestCase subclass: QueryParserTest
+
+  testDecodesUpperAndLowerHex =>
+    self assert: ((QueryParser parse: "n=%41%62%2F") at: "n") equals: "Ab/"
+
+  testDecodesMultiByteUtf8 =>
+    self assert: ((QueryParser parse: "n=%C3%A9") at: "n") equals: "é"
+
+  testLiteralTextAroundGroups =>
+    self assert: ((QueryParser parse: "n=a%41b%42c") at: "n") equals: "aAbBc"
+    self assert: ((QueryParser parse: "n=%41") at: "n") equals: "A"
+    self assert: ((QueryParser parse: "n=x%41%42%43%44%45%46y") at: "n") equals: "xABCDEFy"
+
+  testPlusAndEncodedPlus =>
+    self assert: ((QueryParser parse: "n=a+b%2Bc%20d") at: "n") equals: "a b+c d"
+
+  testTruncatedGroupIsNil =>
+    self assert: (QueryParser parse: "n=%") isNil
+    self assert: (QueryParser parse: "n=%4") isNil
+    self assert: (QueryParser parse: "n=a%") isNil
+    self assert: (QueryParser parse: "n=%41%4") isNil
+
+  testNonHexDigitIsNil =>
+    self assert: (QueryParser parse: "n=%zz") isNil
+    self assert: (QueryParser parse: "n=%4z") isNil
+    self assert: (QueryParser parse: "n=%z4") isNil
+    self assert: (QueryParser parse: "n=%41%gg") isNil
+
+  testHexBoundaryBytesAreRejected =>
+    // The bytes either side of '0'-'9', 'A'-'F' and 'a'-'f'.
+    self assert: (QueryParser parse: "n=%/0") isNil
+    self assert: (QueryParser parse: "n=%:0") isNil
+    self assert: (QueryParser parse: "n=%@0") isNil
+    self assert: (QueryParser parse: "n=%G0") isNil
+    self assert: (QueryParser parse: "n=%`0") isNil
+    self assert: (QueryParser parse: "n=%g0") isNil
+
+  testNonAsciiAfterPercentIsNil =>
+    self assert: (QueryParser parse: "n=%é") isNil
+    self assert: (QueryParser parse: "n=%4é") isNil
+
+  testInvalidUtf8AfterDecodingIsNil =>
+    self assert: (QueryParser parse: "n=%FF") isNil
+    self assert: (QueryParser parse: "n=%C3") isNil
+    self assert: (QueryParser parse: "n=%C3%28") isNil
+
+  testPercentInKeyIsDecodedAndMalformedKeyIsNil =>
+    self assert: ((QueryParser parse: "%41=1") at: "A") equals: "1"
+    self assert: (QueryParser parse: "%4=1") isNil
+
+  testNibbleRejectsEmptyMultiCharAndNonAscii =>
+    self assert: (QueryParser nibble: "") isNil
+    self assert: (QueryParser nibble: "ab") isNil
+    self assert: (QueryParser nibble: "é") isNil

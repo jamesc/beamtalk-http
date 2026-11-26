@@ -150,12 +150,12 @@ typed Actor subclass: HTTPServer
     h := self.handler
     // Decided once here, not per request (BT-4466).
     kind := HttpExchangeAdapter handlerKind: h
-    bound := HttpExchangeAdapter parseBind: self.bind
+    {ip, inet6} := HttpExchangeAdapter parseBind: self.bind
     srv := (Buccaneer
       start: #{
         #port => self.port,
-        #ip => (bound at: 1),
-        #inet6 => (bound at: 2),
+        #ip => ip,
+        #inet6 => inet6,
         #startupLog => false,
         #handler => [:ex :: Exchange |
           HttpExchangeAdapter

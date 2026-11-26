@@ -208,9 +208,9 @@ typed Actor subclass: HTTPClient
       method: method
       url: url
       options: opts
-    conn := done at: 1
+    {conn, outcome} := done
     conn isNil ifFalse: [conn close]
-    done at: 2
+    outcome
 
   /// The full validated request cycle over `conn` (nil connects fresh).
   /// Answers `{connOrNil, Result}`: the live connection threading the
