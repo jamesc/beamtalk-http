@@ -60,7 +60,8 @@ sealed typed Value subclass: HTTPRequest
   /// hand-built request) there is nothing to stream, so this answers
   /// `Result error: #not_supported`. The error is not an `Error` object: it is
   /// a Symbol such as `#not_supported`, `#timeout` or `#closed`, so test it
-  /// with `=:=` rather than sending it `message`.
+  /// with `=:=` rather than sending it `message`. A malformed body raises
+  /// `HTTPError` (a 400) instead of answering a Result.
   ///
   /// ## Examples
   /// ```beamtalk
