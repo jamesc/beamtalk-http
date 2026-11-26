@@ -58,7 +58,10 @@ sealed typed Value subclass: HTTPRequest
   /// process: `HTTPHandler` actors already get the whole body, and using
   /// `readChunk` there raises `#not_owner`. Without an exchange (a
   /// hand-built request) there is nothing to stream, so this answers
-  /// `Result error: #not_supported`.
+  /// `Result error: #not_supported`. The error is not an `Error` object: it is
+  /// a Symbol such as `#not_supported`, `#timeout` or `#closed`, so test it
+  /// with `=:=` rather than sending it `message`. A malformed body raises
+  /// `HTTPError` (a 400) instead of answering a Result.
   ///
   /// ## Examples
   /// ```beamtalk
@@ -69,7 +72,7 @@ sealed typed Value subclass: HTTPRequest
   ///   chunk isEmpty ifTrue: [done := true] ifFalse: [total := total + chunk size]
   /// ]
   /// ```
-  readChunk -> Result(Binary, Error) =>
+  readChunk -> Result(Binary, Object) =>
     ex := self.exchange
     ex isNil ifTrue: [^Result error: #not_supported]
     part := ex readBody

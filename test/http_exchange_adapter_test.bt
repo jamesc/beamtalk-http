@@ -687,6 +687,14 @@ TestCase subclass: HttpExchangeAdapterTest
     self assert: (req inform: 103 headers: #()) equals: (Result error: #not_supported)
     self assert: req body equals: ""
 
+  testReadChunkErrorIsASymbolNotAnError =>
+    // The declared error type is Object: the error is a Symbol, not an Error.
+    req := HTTPRequest new: #{#method => "GET", #path => "/"}
+    outcome := req readChunk
+    self assert: outcome isError
+    self assert: outcome error class =:= Symbol
+    self deny: (outcome error isKindOf: Error)
+
   testStreamWithBlock =>
     self.srv := self
       startBuccaneer: [:req |
