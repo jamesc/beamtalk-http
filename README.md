@@ -121,7 +121,7 @@ Request bodies stream the same way, for block and router handlers
 total := 0
 done := false
 [done] whileFalse: [
-  chunk := (req readChunk) unwrap   // Result(Binary, Error); empty means end
+  chunk := (req readChunk) unwrap   // Result(Binary, Object), the error a Symbol such as #not_supported; empty means end
   chunk isEmpty ifTrue: [done := true] ifFalse: [total := total + chunk size]
 ]
 ```
